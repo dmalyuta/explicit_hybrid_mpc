@@ -20,7 +20,7 @@ class Oracle:
     
     def __init__(self,eps_a,eps_r):
         """
-        Carries out precomputations for the calling the oracle problems.
+        Pre-parses the oracle problems.
         
         Parameters
         ----------
@@ -36,7 +36,7 @@ class Oracle:
         # Parameters
         m = 1. # [kg] Cart mass
         h = 1./20. # [s] Time step
-        self.N = 5 # Prediction horizon length
+        self.N = 10 # Prediction horizon length
         
         # Discretized dynamics Ax+Bu
         self.n_x,n_u = 2,1
@@ -44,7 +44,8 @@ class Oracle:
         B = np.array([[h**2/2.],[h]])/m
         
         # Control constraints
-        lb, ub = 0.2, 1.
+        self.Nu = 3 # Number of control convex subsets, whose union makes the control set
+        lb, ub = 0.05, 1.
         P = [np.array([[1.],[-1.]]),np.array([[-1.],[1.]]),np.array([[1.],[-1.]])]
         p = [np.array([ub*m,-lb*m]),np.array([ub*m,-lb*m]),np.zeros((2))]
         M = np.array([ub*m,ub*m])*10
@@ -52,7 +53,7 @@ class Oracle:
         # Control objectives
         e_p_max = 0.1 # [m] Max position error
         e_v_max = 0.2 # [m/s] Max velocity error
-        u_max = 3.*m # [N] Max control input
+        u_max = 10.*m # [N] Max control input
         
         # Cost
         D_x = np.diag([e_p_max,e_v_max])
@@ -63,7 +64,7 @@ class Oracle:
         # MPC optimization problem
         x = [cvx.Variable(self.n_x) for k in range(self.N+1)]
         self.u = [cvx.Variable(n_u) for k in range(self.N)]
-        self.delta = [cvx.Variable(3, boolean=True) for k in range(self.N)]
+        self.delta = cvx.Variable(self.Nu*self.N, boolean=True)
         self.x0 = cvx.Parameter(self.n_x)
         
         V = sum([cvx.quad_form(x[k],Q)+
@@ -88,10 +89,11 @@ class Oracle:
             constraints = []
             constraints += [x[k+1] == A*x[k]+B*u[k] for k in range(self.N)]
             constraints += [x[0] == theta]
-            for i in range(3):
-                constraints += [P[i]*u[k] <= p[i]+M*delta[k][i] for k in range(self.N)]
+            constraints += [x[-1] == np.zeros(self.n_x)]
+            for i in range(self.Nu):
+                constraints += [P[i]*u[k] <= p[i]+M*delta[self.Nu*k+i] for k in range(self.N)]
             if delta_sum_constraint:
-                constraints += [sum(delta[k]) <= 3-1 for k in range(self.N)]
+                constraints += [sum([delta[self.Nu*k+i] for i in range(self.Nu)]) <= self.Nu-1 for k in range(self.N)]
             return constraints
         
         # Make P_theta, the original MINLP
@@ -100,7 +102,7 @@ class Oracle:
         self.minlp_feasibility = cvx.Problem(cvx.Minimize(0),constraints) # just to check feasibility
         
         # Make P_theta_delta, the fixed-commutation NLP
-        self.delta_fixed = [cvx.Parameter(3) for k in range(self.N)]
+        self.delta_fixed = cvx.Parameter(self.Nu*self.N)
         constraints = make_constraints(self.x0,x,self.u,self.delta_fixed)
         self.nlp = cvx.Problem(cost,constraints)
         
@@ -125,11 +127,12 @@ class Oracle:
         in_simplex = [sum(alpha)==1]
         extra_constraints += in_simplex
         # commutation is not equal to the reference commutation
-        delta_offset = [cvx.Variable(3, boolean=True) for k in range(self.N)]
-        extra_constraints += [self.delta[k][i] == self.delta_fixed[k][i]+
-                              (1-2*self.delta_fixed[k][i])*delta_offset[k][i]
-                              for k in range(self.N) for i in range(3)]
-        extra_constraints += [sum([delta_offset[k][i] for k in range(self.N) for i in range(3)]) >= 1]
+        delta_offset = cvx.Variable(self.Nu*self.N, boolean=True)
+        extra_constraints += [self.delta[self.Nu*k+i] == self.delta_fixed[self.Nu*k+i]+
+                              (1-2*self.delta_fixed[self.Nu*k+i])*delta_offset[self.Nu*k+i]
+                              for k in range(self.N) for i in range(self.Nu)]
+        extra_constraints += [sum([delta_offset[self.Nu*k+i] for k in range(self.N)
+                                   for i in range(self.Nu)]) >= 1]
         constraints += extra_constraints
         # cost using affine over-approximator for reference commutation
         bar_V = sum([alpha[i]*self.vertex_costs[i] for i in range(self.n_x+1)])
@@ -180,7 +183,7 @@ class Oracle:
         --OR--
         u_opt : np.array
             Optimal input value.
-        delta_opt : list
+        delta_opt : np.array
             Optimal commutation.
         """
         self.x0.value = theta
@@ -190,7 +193,7 @@ class Oracle:
         else:
             self.minlp.solve(**self.solver_options)
             u_opt = self.u[0].value
-            delta_opt = [self.delta[k].value for k in range(self.N)]
+            delta_opt = self.delta.value
             return u_opt, delta_opt
 
     def P_theta_delta(self,theta,delta):
@@ -201,7 +204,7 @@ class Oracle:
         ----------
         theta : np.array
             Parameter value.
-        delta : list
+        delta : np.array
             Commutation value.
             
         Returns
@@ -212,8 +215,7 @@ class Oracle:
             Optimal cost.
         """
         self.x0.value = theta
-        for k in range(self.N):
-            self.delta_fixed[k].value = delta[k]
+        self.delta_fixed.value = delta
         self.nlp.solve(**self.solver_options)
         J_opt = self.nlp.value
         u_opt = self.u[0].value
@@ -225,18 +227,18 @@ class Oracle:
         
         Parameters
         ----------
-        R : list
-            List of simplex vertices (length self.n_x+1).
+        R : np.array
+            2D array whose rows are simplex vertices (length self.n_x+1).
             
         Returns
         -------
-        delta_feas : list
+        delta_feas : np.array
             Feasible commutation in R.
         """
         for k in range(self.n_x+1):
             self.vertices[k].value = R[k]
         self.feasibility_in_simplex.solve(**self.solver_options)
-        delta_feas = [self.delta[k].value for k in range(self.N)]
+        delta_feas = self.delta.value
         return delta_feas
     
     def bar_E_ar_R(self,R,V_delta_R,delta_ref):
@@ -246,11 +248,11 @@ class Oracle:
         
         Parameters
         ----------
-        R : list
-            List of simplex vertices (length self.n_x+1).
+        R : np.array
+            2D array whose rows are simplex vertices (length self.n_x+1).
         V_delta_R : np.array
             Array of cost at corresponding vertex in R.
-        delta_ref : list
+        delta_ref : np.array
             Reference "baseline" commutation against which suboptimality is to
             be checked (i.e. the one whose cost is being over-approximated).
             
@@ -261,9 +263,9 @@ class Oracle:
         bar_e_r_R : float
             Over-approximated relative error.
         """
+        self.delta_fixed.value = delta_ref
         for k in range(self.n_x+1):
             self.vertices[k].value = R[k]
-            self.delta_fixed[k].value = delta_ref[k]
         self.vertex_costs.value = V_delta_R
         self.abs_err_overapprox.solve(**self.solver_options)
         self.rel_err_denom.solve(**self.solver_options)
@@ -278,11 +280,11 @@ class Oracle:
         
         Parameters
         ----------
-        R : list
-            List of simplex vertices (length self.n_x+1).
+        R : np.array
+            2D array whose rows are simplex vertices (length self.n_x+1).
         V_delta_R : np.array
             Array of cost at corresponding vertex in R.
-        delta_ref : list
+        delta_ref : np.array
             Reference "baseline" commutation against which suboptimality is to
             be checked (i.e. the one whose cost is being over-approximated).
             
@@ -291,9 +293,9 @@ class Oracle:
         : bool
             ``True`` if R is in the variability ball (for some offset).
         """
+        self.delta_fixed.value = delta_ref
         for k in range(self.n_x+1):
             self.vertices[k].value = R[k]
-            self.delta_fixed[k].value = delta_ref[k]
         max_lhs = np.max(V_delta_R)
         min_lhs = self.min_over_simplex_for_this_delta.solve(**self.solver_options)
         rhs = max(self.eps_a,self.eps_r*self.min_over_simplex_for_any_delta.solve(**self.solver_options))
@@ -306,47 +308,51 @@ class Oracle:
         
         Parameters
         ----------
-        R : list
-            List of simplex vertices (length self.n_x+1).
+        R : np.array
+            2D array whose rows are simplex vertices (length self.n_x+1).
         V_delta_R : np.array
             Array of cost at corresponding vertex in R.
-        delta_ref : list
+        delta_ref : np.array
             Reference "baseline" commutation against which suboptimality is to
             be checked (i.e. the one whose cost is being over-approximated).
             
         Returns
         -------
+        better_delta : np.array
+            More optimal commutation.
         """
+        self.delta_fixed.value = delta_ref
         for k in range(self.n_x+1):
             self.vertices[k].value = R[k]
-            self.delta_fixed[k].value = delta_ref[k]
         self.vertex_costs.value = V_delta_R
         self.min_V_except_delta.value = self.min_over_simplex_for_any_delta_except_ref.solve(**self.solver_options)
         self.find_more_optimal_commutation.solve(**self.solver_options)
-        better_delta = [self.delta[k].value for k in range(self.N)]
+        better_delta = self.delta.value
         #print(self.find_more_optimal_commutation.value,self.eps_r*self.min_V_except_delta.value)
-        self.min_over_simplex_for_any_delta.solve(**self.solver_options)
+        #self.min_over_simplex_for_any_delta.solve(**self.solver_options)
         #print(self.min_V_except_delta.value,self.min_over_simplex_for_any_delta.value)
         return better_delta
 
+eps_a,eps_r = 1., 0.1
+oracle = Oracle(eps_a=eps_a,eps_r=eps_r)
+
 # =============================================================================
-# eps_a,eps_r = 1., 0.1
-# oracle = Oracle(eps_a=eps_a,eps_r=eps_r)
-# 
 # # Test baseline MINLP
-# u,delta = oracle.P_theta(np.array([0.0,0.]))
+# u,delta = oracle.P_theta(np.array([0.05,0.04]))
 # print(u)
 # 
 # # Test fixed-commutation NLP
-# u2,J = oracle.P_theta_delta(np.array([0.,0.]),delta)
+# u2,J = oracle.P_theta_delta(np.array([0.0,0.0]),delta)
 # print(u2)
 # 
 # # Test find-feasible-commutation-in-simplex MINLP
-# side=0.1
-# R = [np.array([0.0,0.0]),np.array([side,0.0]),np.array([0.0,side])]
+# #side=0.1
+# R = [np.array([0.0,0.0]),np.array([0.05,0.0]),np.array([0.0,0.04])]
 # delta_feas = oracle.V_R(R)
 # print(delta_feas)
-# 
+# =============================================================================
+
+# =============================================================================
 # # Test absolute error over-approximation
 # delta_ref = delta
 # V_delta_R = [oracle.P_theta_delta(vertex,delta_ref)[1] for vertex in R]
@@ -364,11 +370,11 @@ class Oracle:
 # 
 # # Test finding a more optimal commutation in R
 # x_o = np.array([0.5,0.2])
-# side = 0.1
+# side = 0.2
 # R = [x_o,x_o+np.array([side,0.0]),x_o+np.array([0.0,side])]
 # delta_ref = delta
 # V_delta_R = [oracle.P_theta_delta(vertex,delta_ref)[1] for vertex in R]
 # better_delta = oracle.D_delta_R(R,V_delta_R,delta_ref)
+# print(better_delta)
 # =============================================================================
-
 
