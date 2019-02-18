@@ -19,6 +19,7 @@ from set_synthesis import minRPI
 from specifications import Specifications
 from general import fullrange
 from tools import getM
+from plant import Plant
 
 """
 All MPC classes provide access to the following variables:
@@ -55,7 +56,15 @@ class MPC:
             raise NotImplementedError('make_constraints() not implemented')
         self.make_constraints = make_constraints
         
-    def setup_RMPC(self,A,B,E,Q_coeff):
+    def setup_RMPC(self,Q_coeff):
+        """
+        Setup robust MPC optimization problem.
+        
+        Parameters
+        ----------
+        Q_coeff : float
+            Coefficient to multiply identity state weight by in the cost.
+        """
         # Setup optimization problem matrices and other values
         self.D_u = self.specs.U_ext.computeScalingMatrix()
         D_w = Polytope(self.specs.P.R,self.specs.P.r).computeScalingMatrix()
@@ -69,7 +78,7 @@ class MPC:
         self.Nu = len(H) # Number of convex sets whose union makes the control set
         qq = [(1./(1-1./dep.pq) if dep.pq!=1 else np.inf) for dep in
               self.specs.P.dependency]
-        D = self.make_D_matrix(self.specs,A,B,E)
+        D = self.plant.D(self.specs)
         #n_r = r.size
         n_q = len(self.specs.P.L)
         bigM = getM(H,h)
@@ -101,7 +110,7 @@ class MPC:
                 \max_{R*w<=r} G_j^T*A^{k-1-i}*D*W*w.
             """
             w = cvx.Variable(R.shape[1])
-            cost = cvx.Maximize(G[j].dot(mpow(A,k-1-i)).dot(D).dot(W).dot(D_w)*w)
+            cost = cvx.Maximize(G[j].dot(mpow(self.plant.A,k-1-i)).dot(D).dot(W).dot(D_w)*w)
             constraints = [R.dot(D_w)*w <= r]
             problem = cvx.Problem(cost,constraints)
             return problem.solve(solver=cvx.GUROBI, verbose=False)
@@ -128,7 +137,7 @@ class MPC:
         def make_constraints(theta,x,u,delta,delta_sum_constraint=True):
             constraints = []
             # Nominal dynamics
-            constraints += [x[k+1] == A*x[k]+B*u[k] for k in range(self.N)]
+            constraints += [x[k+1] == self.plant.A*x[k]+self.plant.B*u[k] for k in range(self.N)]
             constraints += [x[0] == theta]
             # Robustness constraint tightening
             G,g,n_g = self.specs.X.A, self.specs.X.b, self.specs.X.b.size
@@ -139,7 +148,7 @@ class MPC:
                             sum_sigma[(k-1)*n_g:k*n_g]+
                             sum([sum([
                             np.array([
-                            la.norm(G[j].dot(mpow(A,k-1-i)).dot(D).dot(self.specs.P.L[l]),ord=qq[l])
+                            la.norm(G[j].dot(mpow(self.plant.A,k-1-i)).dot(D).dot(self.specs.P.L[l]),ord=qq[l])
                             for j in range(n_g)])*
                             self.specs.P.dependency[l].phi_direct(x[i],u[i])
                             for l in range(n_q)])
@@ -155,32 +164,6 @@ class MPC:
             return constraints
         
         self.make_constraints = make_constraints
-        
-    def make_D_matrix(self, specs, A,B,E):
-        """
-        Create the disturbance gain matrix D for the concatenated disturbance
-        p=(w,e,v) given the specifications specs.
-        
-        Parameters
-        ----------
-        specs : Specifications
-            The specifications.
-        
-        Returns
-        -------
-        D : array
-            The matrix D such that x+ = A*x+B*u+D*p where p=(w,e,v).
-        """
-        D = []
-        # For state uncertainty, our model is z=x+v where z is estimated state,
-        # x is actual state and v is the state estimation error. Therefore
-        # x=z-v so Ax=A(z-v)=Az-Av therefore the multiplier matrix for the
-        # state uncertainty is -A, not A.
-        M = {'state':-A,'input':B,'process':E}
-        for uncertainty_type in specs.P.type:
-            D += [M[uncertainty_type]]
-        D = np.hstack(D) if D!=[] else None
-        return D
     
 class RandomSystem(MPC):
     """
@@ -193,7 +176,7 @@ class RandomSystem(MPC):
         n_x : int
             State dimension.
         """
-        self.N = 3
+        self.N = 2
         # Make plant
         # continuous-time
         self.n_x, self.n_u = n_x, n_x//2
@@ -207,6 +190,7 @@ class RandomSystem(MPC):
         E_c = np.vstack([np.zeros([self.n_u,self.n_u]),np.eye(self.n_u)])
         M = sla.expm(np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_u+self.n_x))]])*T_d)
         E = M[:self.n_x,self.n_x:]
+        self.plant = Plant(T_d,A,B,E)
         # Design LQR controller
         Q = 0.1*np.eye(A.shape[0])
         R = np.eye(B.shape[1])
@@ -238,7 +222,7 @@ class RandomSystem(MPC):
         # Make specifications
         self.specs = Specifications(self.rpi,(U_int,U_ext),Puc)
         # Setup the RMPC problem
-        self.setup_RMPC(A=A,B=B,E=E,Q_coeff=np.max(Q))
+        self.setup_RMPC(Q_coeff=np.max(Q))
         
     def gensys(self,decay=dict(min=1.,max=10.),min_period=1.,
                min_damping=0.3,prob_oscillatory=0.8,mass=dict(min=0.1,max=1.)):
@@ -377,9 +361,10 @@ class SatelliteZ(MPC):
         B = A.dot(B_c)
         M = np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
         E = sla.expm(M)[:self.n_x,self.n_x:]
+        self.plant = Plant(pars['T_s'],A,B,E)
 
         # Setup the RMPC problem        
-        self.setup_RMPC(A=A,B=B,E=E,Q_coeff=3e-3)
+        self.setup_RMPC(Q_coeff=3e-3)
 
 class Cart1D(MPC):
     """

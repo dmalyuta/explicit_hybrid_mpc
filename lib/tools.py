@@ -41,8 +41,7 @@ class Progress:
         self.open_count = open_count
         self.volume_closed = 0.
         self.closed_count = 0
-        self.bar = progressbar.ProgressBar(max_value=1.,widgets=self.widgets,
-                                           redirect_stdout=True)
+        self.bar = progressbar.ProgressBar(max_value=1.,widgets=self.widgets)
         self.bar.start()
         
     def update(self,volume_increment=None,count_increment=None):

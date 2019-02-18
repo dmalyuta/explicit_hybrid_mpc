@@ -17,7 +17,7 @@ class Oracle:
     """
     solver_options = dict(solver=cvx.GUROBI, verbose=False)
     
-    def __init__(self,mpc,eps_a,eps_r):
+    def __init__(self,mpc,eps_a,eps_r,kind='semiexplicit'):
         """
         Pre-parses the oracle problems.
         
@@ -30,10 +30,14 @@ class Oracle:
         eps_r : float
             Relative error tolerance (>0 where 0 is fully tight, 1 is 100%
             relative error, etc.).
+        kind : {'semiexplicit','explicit'}
+            Supports partitioning for semi-explicit or explicit MPC
+            implementations.
         """
         self.mpc = mpc
         self.eps_a = eps_a
         self.eps_r = eps_r
+        self.kind = kind
         
         # Make P_theta, the original MINLP
         constraints = self.mpc.make_constraints(self.mpc.x0,self.mpc.x,self.mpc.u,self.mpc.delta)
@@ -65,14 +69,18 @@ class Oracle:
         extra_constraints = []
         in_simplex = [sum(alpha)==1]
         extra_constraints += in_simplex
-        # commutation is not equal to the reference commutation
+        if kind=='explicit':
+            constraints += extra_constraints
+        # commutation is not equal to the reference commutation, only used
+        # for semi-explicit implementation and D_delta^R below
         delta_offset = cvx.Variable(self.mpc.Nu*self.mpc.N, boolean=True)
         extra_constraints += [self.mpc.delta[self.mpc.Nu*k+i] == self.delta_fixed[self.mpc.Nu*k+i]+
                               (1-2*self.delta_fixed[self.mpc.Nu*k+i])*delta_offset[self.mpc.Nu*k+i]
                               for k in range(self.mpc.N) for i in range(self.mpc.Nu)]
         extra_constraints += [sum([delta_offset[self.mpc.Nu*k+i] for k in range(self.mpc.N)
                                    for i in range(self.mpc.Nu)]) >= 1]
-        constraints += extra_constraints
+        if kind=='semiexplicit':
+            constraints += extra_constraints
         # cost using affine over-approximator for reference commutation
         bar_V = sum([alpha[i]*self.vertex_costs[i] for i in range(self.mpc.n_x+1)])
         cost_abs_err = cvx.Maximize(bar_V-self.mpc.V)

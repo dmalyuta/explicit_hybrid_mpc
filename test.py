@@ -10,6 +10,8 @@ Copyright 2019 University of Washington. All rights reserved.
 import numpy as np
 import numpy.linalg as la
 
+import sys
+sys.path.append('lib/')
 from mpc_library import SatelliteZ, RandomSystem
 from oracle import Oracle
 from polytope import Polytope
@@ -43,7 +45,7 @@ if test=='satellite':
     partition, number_init_simplices, vol = delaunay(Theta)
     
     # Progress bar
-    progressbar = None#Progress(vol,number_init_simplices)
+    progressbar = Progress(vol,number_init_simplices)
     
     # Feasible partition
     algorithm_call(ecc,oracle,partition,animator=animator,progressbar=progressbar)
@@ -71,7 +73,6 @@ elif test=='random':
     origin_neighborhood_frac = 0.01
     absolute_error = np.max([oracle.P_theta(theta=vx)[2] for vx in
                       [origin_neighborhood_frac*vx for vx in sys.rpi.V]])
-    oracle.eps_a = absolute_error
     oracle = Oracle(sys, eps_a=absolute_error, eps_r=relative_error)
     
     # Animation

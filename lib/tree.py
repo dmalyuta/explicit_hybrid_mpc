@@ -8,7 +8,7 @@ Copyright 2019 University of Washington. All rights reserved.
 """
 
 class NodeData:
-    def __init__(self,vertices,commutation=None,vertex_costs=None):
+    def __init__(self,vertices,commutation=None,vertex_costs=None,vertex_inputs=None):
         """
         Create node data container.
         
@@ -21,15 +21,20 @@ class NodeData:
         vertex_costs : np.array (optional)
             1D array of the same length as vertices.shape[0] of optimal costs
             at the vertices using the commutation.
+        vertex_inputs : np.array (optional)
+            2D array of the same length as vertices.shape[0] of optimal inputs
+            at the vertices using the commutation (row i is for the i-th vertex).
         """
         self.vertices = vertices
         if commutation is not None:
             self.commutation = commutation
         if vertex_costs is not None:
             self.vertex_costs = vertex_costs
+        if vertex_inputs is not None:
+            self.vertex_inputs = vertex_inputs
 
 class Tree:
-    def __init__(self,data):
+    def __init__(self,data,top=True):
         """
         Create root node.
         
@@ -37,8 +42,11 @@ class Tree:
         ----------
         data : NodeData
             Data associated with the tree node.
+        top : bool, optional
+            If ``True``, the object corresponds to the top of the tree.
         """
         self.data = data
+        self.top = top
         
     def grow(self,left,right):
         """
@@ -51,8 +59,8 @@ class Tree:
         right : NodeData
             Right child's data.
         """
-        self.left = Tree(left)
-        self.right = Tree(right)
+        self.left = Tree(left,top=False)
+        self.right = Tree(right,top=False)
     
     def is_leaf(self):
         """
