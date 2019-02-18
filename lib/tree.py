@@ -7,6 +7,8 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import time
+
 class NodeData:
     def __init__(self,vertices,commutation=None,vertex_costs=None,vertex_inputs=None):
         """
@@ -25,6 +27,7 @@ class NodeData:
             2D array of the same length as vertices.shape[0] of optimal inputs
             at the vertices using the commutation (row i is for the i-th vertex).
         """
+        self.timestamp = time.time()
         self.vertices = vertices
         if commutation is not None:
             self.commutation = commutation

@@ -9,9 +9,11 @@ Copyright 2019 University of Washington. All rights reserved.
 
 import pickle
 import time
+import random
 import numpy as np
 import numpy.linalg as la
 import matplotlib.pyplot as plt
+from matplotlib import rc
 
 import sys
 sys.path.append('lib/')
@@ -29,7 +31,7 @@ sat = SatelliteZ()
 
 if existing_data is None:
     # Parameters
-    Nres = 5 # How many "resolutions" to test
+    Nres = 2 # How many "resolutions" to test
     rho_max = 1000 # Maximum condition number
     origin_neighborhood_fracs = np.linspace(0.1,0.5,Nres)
     relative_errors = np.linspace(0.1,2.0,Nres)
@@ -55,6 +57,9 @@ if existing_data is None:
     runtimes = dict(explicit=[],semiexplicit=[])
     for i in range(Nres):
         for kind in ['explicit','semiexplicit']:
+            
+            print('\n\n %s %d \n\n'%(kind,i))
+            
             # Initial triangulation
             partition, number_init_simplices, vol = delaunay(Theta)
             
@@ -88,6 +93,8 @@ if existing_data is None:
                      relative_errors=relative_errors,
                      origin_neighborhood_fracs=origin_neighborhood_fracs,
                      partitions=partitions),open('data/all_partitions.pkl','wb'))
+    
+    print('\n\n DONE \n\n')
 else:
     data = pickle.load(open(existing_data,'rb'))
     absolute_errors = data['absolute_errors']
@@ -257,32 +264,190 @@ def mpc_explicit(oracle,root,theta):
     u_eps_subopt = inputs.T.dot(alpha)
     return u_eps_subopt
 
-# TODO simulation goes here using mpc_implicit, mpc_semiexplicit and mpc_explicit
-simulator = Simulator(lambda x: mpc_implicit(oracles['semiexplicit'][0],x),sat,1*3600.)
-sim_out_implicit = simulator.run(np.array([sat.pars['pos_err_max'],sat.pars['vel_err_max']]),label='implicit')
+# Run simulation with seed resetting (so that every simulation has the same
+# noise realization)
+N_orbits = 3 # Number of orbits to simulate
+T_per_orbit = (2.*np.pi/sat.pars['wo']) # [s] Time for one orbit
+T = N_orbits*T_per_orbit # Simulation final time
+x_0 = np.array([sat.pars['pos_err_max'],sat.pars['vel_err_max']]) # Initial state
 
-simulator = Simulator(lambda x: mpc_semiexplicit(oracles['semiexplicit'][0],partitions['semiexplicit'][0],x),sat,1*3600.)
-sim_out_semiexplicit = simulator.run(np.array([sat.pars['pos_err_max'],sat.pars['vel_err_max']]),label='semiexplicit')
+def as_si(x, ndp):
+    """
+    Convert number of scientific notation for label.
+    
+    Parameters
+    ----------
+    x : float
+        The number.
+    ndp : int
+        Number of decimal places to show.
+        
+    Returns
+    -------
+    : str
+        Number in scientific notation (decimal)*10^(exponent).
+    """
+    s = '{x:0.{ndp:d}e}'.format(x=x, ndp=ndp)
+    m, e = s.split('e')
+    return r'{m:s}\cdot 10^{{{e:d}}}'.format(m=m, e=int(e))
 
-simulator = Simulator(lambda x: mpc_explicit(oracles['explicit'][0],partitions['explicit'][0],x),sat,1*3600.)
-sim_out_explicit = simulator.run(np.array([sat.pars['pos_err_max'],sat.pars['vel_err_max']]),label='explicit')
+# Implicit MPC
+oracle = Oracle(sat,eps_a=1.,eps_r=1.) # Any eps_a,eps_r - just need P_theta()
+simulator = Simulator(lambda x: mpc_implicit(oracle,x),sat,T)
+random.seed(1)
+sim_implicit = simulator.run(np.array([sat.pars['pos_err_max'],sat.pars['vel_err_max']]),label='implicit')
+
+# Semi-explicit and explicit MPC
+sim_offline = dict(semiexplicit=[],explicit=[])
+for i in range(Nres):
+    for kind in ['explicit','semiexplicit']:
+        random.seed(1)
+        mpc_call = mpc_explicit if kind=='explicit' else mpc_semiexplicit
+        simulator = Simulator(lambda x: mpc_call(oracles[kind][i],partitions[kind][i],x),sat,T)
+        sim_offline[kind].append(simulator.run(x_0,label='$\epsilon_{\mathrm{a}}=%s$, $\epsilon_{\mathrm{r}}=%s$'%
+                                               (as_si(absolute_errors[i],2),as_si(relative_errors[i],2))))
 
 #%%
 # Plots
-fig = plt.figure(1)
-plt.clf()
-ax = fig.add_subplot(111)
-ax.plot(sim_out_implicit.t,sim_out_implicit.x[0],label=sim_out_implicit.label)
-ax.plot(sim_out_semiexplicit.t,sim_out_semiexplicit.x[0],label=sim_out_semiexplicit.label)
-ax.plot(sim_out_explicit.t,sim_out_explicit.x[0],label=sim_out_explicit.label)
-#ax.plot(sim_out.t,sim_out.x[1])
 
-fig = plt.figure(2)
+rc('text', usetex=True)
+rc('font', family='serif')
+
+# Position and velocity response comparison
+pos_min = min(np.min(sim_implicit.x[0]),
+              np.min([np.min(sim_offline['semiexplicit'][i].x[0]) for i in range(Nres)]),
+              np.min([np.min(sim_offline['explicit'][i].x[0]) for i in range(Nres)]))
+pos_max = min(np.max(sim_implicit.x[0]),
+              np.max([np.max(sim_offline['semiexplicit'][i].x[0]) for i in range(Nres)]),
+              np.max([np.max(sim_offline['explicit'][i].x[0]) for i in range(Nres)]))
+vel_min = -0.2e-3#min(np.min(sim_implicit.x[1]),
+              #np.min([np.min(sim_offline['semiexplicit'][i].x[1]) for i in range(Nres)]),
+              #np.min([np.min(sim_offline['explicit'][i].x[1]) for i in range(Nres)]))
+vel_max = 0.2e-3#min(np.max(sim_implicit.x[1]),
+              #np.max([np.max(sim_offline['semiexplicit'][i].x[1]) for i in range(Nres)]),
+              #np.max([np.max(sim_offline['explicit'][i].x[1]) for i in range(Nres)]))
+fig = plt.figure(1,figsize=(7.,5.6))
 plt.clf()
-ax = fig.add_subplot(111)
-ax.semilogy(sim_out_implicit.t,sim_out_implicit.t_call,label=sim_out_implicit.label)
-ax.semilogy(sim_out_semiexplicit.t,sim_out_semiexplicit.t_call,label=sim_out_semiexplicit.label)
-ax.semilogy(sim_out_explicit.t,sim_out_explicit.t_call,label=sim_out_explicit.label)
+lines = []
+labels = []
+axs = []
+for k,j,ylabel,kind in zip([1,3,2,4],
+                           [0,1]*2,
+                           ['Position [mm]','Velocity [mm/s]']*2,
+                           ['semiexplicit','semiexplicit','explicit','explicit']):
+    ax = fig.add_subplot(3,2,k)
+    axs.append(ax)
+    ax.grid(color='lightgray')
+    line, = ax.plot(sim_implicit.t/T_per_orbit,sim_implicit.x[j]*1e3,color='gray',linewidth=2)
+    if k==1:
+        lines.append(line)
+        labels.append(sim_implicit.label)
+    for i in range(Nres):
+        line, = ax.plot(sim_offline[kind][i].t/T_per_orbit,sim_offline[kind][i].x[j]*1e3,
+                        linewidth=1)
+        if k==1:
+            lines.append(line)
+            labels.append(sim_offline[kind][i].label)
+    if k==1 or k==3:
+        ax.set_ylabel(ylabel)
+    else:
+        plt.setp(ax.get_yticklabels(), visible=False)
+        plt.tick_params(axis='y',which='both',left=False,right=False)
+    plt.autoscale(tight=True)
+    if j==0:
+        ax.set_ylim([pos_min*1e3,pos_max*1e3])
+    else:
+        ax.set_ylim([vel_min*1e3,vel_max*1e3])
+    plt.setp(ax.get_xticklabels(), visible=False)
+for k,kind in zip([5,6],['semiexplicit','explicit']):
+    ax = fig.add_subplot(3,2,k)
+    axs.append(ax)
+    ax.grid(color='lightgray')
+    ax.plot(sim_implicit.t/T_per_orbit,sim_implicit.u[0]*1e6,color='gray',linewidth=2,label=sim_implicit.label)
+    for i in range(Nres):
+        ax.plot(sim_offline[kind][i].t/T_per_orbit,sim_offline[kind][i].u[0]*1e6,
+                label=sim_offline[kind][i].label,linewidth=0.5)
+    ax.set_xlabel('Number of orbits')
+    if k==5:
+        ax.set_ylabel('Input [$\mu$m/s]')
+    else:
+        plt.setp(ax.get_yticklabels(), visible=False)
+        plt.tick_params(axis='y',which='both',left=False,right=False)
+    plt.autoscale(tight=True)
+    ax.set_ylim([-40,40])
+plt.tight_layout(rect=[0,0.03,1,1])
+plt.subplots_adjust(hspace=.0,wspace=.0)
+fig.align_ylabels([axs[0],axs[1],axs[4]])
+plt.figlegend(lines, labels, loc = 'lower center', ncol=5, labelspacing=0. , prop={'size':9})
+
+yticklabels = ['']+[item.get_text() for item in axs[1].get_yticklabels()[1:]]
+axs[1].set_yticklabels(yticklabels)
+xticklabels = ['']+[item.get_text() for item in axs[-1].get_xticklabels()[1:]]
+axs[-1].set_xticklabels(xticklabels)
+
+# MPC call time statistics
+lines, labels = [], []
+t_call_max = max(np.max(sim_implicit.t_call),
+                 np.max([np.max(sim_offline['semiexplicit'][i].t_call) for i in range(Nres)]))
+t_call_min = np.min([np.min(sim_offline['explicit'][i].t_call) for i in range(Nres)])
+fig = plt.figure(2,figsize=(6.6,2.4))
+plt.clf()
+ax = fig.add_subplot(131)
+ax.grid()
+line, = ax.semilogy(sim_implicit.t/T_per_orbit,sim_implicit.t_call*1e3,
+            color='gray',linewidth=1)
+lines.append(line)
+labels.append(sim_implicit.label)
+plt.autoscale(tight=True)
+ax.set_ylim([t_call_min*1e3,t_call_max*1e3])
+ax.set_ylabel('Evaluation time [ms]')
+ax.set_xlabel('Number of orbits')
+ax2 = fig.add_subplot(132)
+ax2.grid()
+for i in range(Nres):
+    line, = ax2.semilogy(sim_offline['semiexplicit'][i].t/T_per_orbit,
+                sim_offline['semiexplicit'][i].t_call*1e3,
+                linewidth=1)
+    lines.append(line)
+    labels.append(sim_offline['semiexplicit'][i].label)
+plt.autoscale(tight=True)
+ax2.set_ylim([t_call_min*1e3,t_call_max*1e3])
+plt.setp(ax2.get_yticklabels(), visible=False)
+ax2.set_xlabel('Number of orbits')
+ax3 = fig.add_subplot(133)
+ax3.grid()
+for i in range(Nres):
+    ax3.semilogy(sim_offline['explicit'][i].t/T_per_orbit,
+                sim_offline['explicit'][i].t_call*1e3,
+                label=sim_offline['explicit'][i].label,
+                linewidth=1)
+plt.autoscale(tight=True)
+ax3.set_ylim([t_call_min*1e3,t_call_max*1e3])
+ax3.set_xlabel('Number of orbits')
+plt.setp(ax3.get_yticklabels(), visible=False)
+plt.tight_layout(rect=[0,0.07,1,1])
+plt.subplots_adjust(hspace=.0,wspace=.0)
+plt.figlegend(lines, labels, loc = 'lower center', ncol=5, labelspacing=0. , prop={'size':9})
+
+ax2.set_xticklabels(['']+[item.get_text() for item in ax2.get_xticklabels()[1:]])
+ax3.set_xticklabels(['']+[item.get_text() for item in ax3.get_xticklabels()[1:]])
+
+# =============================================================================
+# fig = plt.figure(1)
+# plt.clf()
+# ax = fig.add_subplot(111)
+# ax.plot(sim_out_implicit.t,sim_out_implicit.x[0],label=sim_out_implicit.label)
+# ax.plot(sim_out_semiexplicit.t,sim_out_semiexplicit.x[0],label=sim_out_semiexplicit.label)
+# ax.plot(sim_out_explicit.t,sim_out_explicit.x[0],label=sim_out_explicit.label)
+# #ax.plot(sim_out.t,sim_out.x[1])
+# 
+# fig = plt.figure(2)
+# plt.clf()
+# ax = fig.add_subplot(111)
+# ax.semilogy(sim_out_implicit.t,sim_out_implicit.t_call,label=sim_out_implicit.label)
+# ax.semilogy(sim_out_semiexplicit.t,sim_out_semiexplicit.t_call,label=sim_out_semiexplicit.label)
+# ax.semilogy(sim_out_explicit.t,sim_out_explicit.t_call,label=sim_out_explicit.label)
+# =============================================================================
 
 #%% 
 
