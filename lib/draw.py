@@ -36,11 +36,11 @@ def draw(root,animator):
     if root.is_leaf():
         animator.update(Polytope(V=root.data.vertices,A=False),**anim_closed_leaf(root.data.commutation))
     else:
-        animator.update(Polytope(V=root.data.vertices,A=False),**anim_open_leaf)
+        #animator.update(Polytope(V=root.data.vertices,A=False),**anim_open_leaf)
         draw(root.left,animator)
         draw(root.right,animator)
         
 sat = SatelliteZ()
 animator = Animator(1,sat)
 
-draw(partition,animator)
+draw(partitions['explicit'][0],animator)

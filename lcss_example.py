@@ -20,21 +20,21 @@ sys.path.append('lib/')
 from mpc_library import SatelliteZ
 from oracle import Oracle
 from polytope import Polytope
-from tools import Progress, delaunay
+from tools import Progress, delaunay, simplex_volume
 from partition import algorithm_call, ecc, lcss
 from simulator import Simulator
 
-existing_data = 'data/all_partitions.pkl' # None or filepath
+existing_data = None#'data/all_partitions.pkl' # None or filepath
 
 # MPC law
 sat = SatelliteZ()
 
 if existing_data is None:
     # Parameters
-    Nres = 2 # How many "resolutions" to test
+    Nres = 5 # How many "resolutions" to test
     rho_max = 1000 # Maximum condition number
-    origin_neighborhood_fracs = np.linspace(0.1,0.5,Nres)
-    relative_errors = np.linspace(0.1,2.0,Nres)
+    origin_neighborhood_fracs = np.array([0.01,0.03,0.1,0.25,0.5])#np.linspace(0.01,0.5,Nres)
+    relative_errors = np.array([0.01,0.05,0.1,1.0,2.0])#np.linspace(0.1,2.0,Nres)
     
     # The set to partition
     Theta = Polytope(R=[(-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
@@ -112,43 +112,110 @@ else:
     
 #%% Post-process
     
-# Generate halfspace representation for each "left" child
-def gen_hrep(root):
+# Generate simplex basis inverse for containmenet checking for each "left" child
+def gen_Minv(root):
     """
-    Generate halfspace representation of the "left" children in the binary
-    tree (the right children do not need one thanks to mutual exclusivity).
+    Pre-compute inverse of the basis matrix of each simplex for checking
+    containement of the parameter vector in the simplex . Do this only for the
+    "left" children in the binary tree (the right children do not need one
+    thanks to mutual exclusivity).
     
     Parameters
     ----------
     root : Tree
         Tree root.
     """
-    def hrep(V):
-        """Convert vertex to halspace representation"""
-        poly = Polytope(V=V)
-        A,b = poly.A,poly.b
-        return A,b
-        
-    if root.top:
-        root.data.hrep_A,root.data.hrep_b = hrep(root.data.vertices)
-        
+    def Minv(vertices):
+        """Compute the inverse "mixing" matrix"""
+        M = np.column_stack([vx-vertices[0] for vx in vertices[1:]])
+        return la.inv(M)
+
     if not root.is_leaf():
-        root.left.data.hrep_A,root.left.data.hrep_b = hrep(root.left.data.vertices)
-        gen_hrep(root.left)
-        gen_hrep(root.right)
+        root.left.data.Minv = Minv(root.left.data.vertices)
+        gen_Minv(root.left)
+        gen_Minv(root.right)
+    else:
+        root.data.Minv = Minv(root.data.vertices)
 
 for i in range(Nres):
     for kind in ['explicit','semiexplicit']:
-        gen_hrep(partitions[kind][i])    
+        gen_Minv(partitions[kind][i])    
 
 #%% Maximum tree depth plot
 
-# TODO recursive function
+def get_tree_depth(root,depth=0):
+    """
+    Extract the maximum depth of the tree.
     
+    Parameters
+    ----------
+    root : Tree
+        Tree root.
+    depth : int, optional
+        Depth value of tree root (normally you shouldn't touch this).
+        
+    Returns
+    -------
+    depth : int
+        Maximum tree depth.
+    """
+    if not root.is_leaf():
+        return max(get_tree_depth(root.left,depth=depth+1),
+                   get_tree_depth(root.right,depth=depth+1))
+    return depth
+
+tree_depths = dict(semiexplicit=[], explicit=[])
+for i in range(Nres):
+    for kind in ['semiexplicit','explicit']:
+        tree_depths[kind].append(get_tree_depth(partitions[kind][i]))
+        
+# TODO plot showing that tree depth increases as -log(x), to show that Theorem
+# 2 of L-CSS paper is verified practically
+# Do some kind of non-linear regressin maybe
+
 #%% Tree depth vs. distance from origin of simplex center
     
-# TODO recursive function
+def get_tree_depth_vs_distance(root,depth=0,stats=None):
+    """
+    Extract data (depth of leaf in tree, leaf simplex barycenter's distance
+    from origin).
     
+    Parameters
+    ----------
+    root : Tree
+        Tree root.
+    depth : int, optional
+        Depth value of tree root (normally you shouldn't touch this).
+    stats : list, optional
+        Contains the depth vs. distance from origin statistics. **Do not pass
+        this yourself, it gets filled in by the function**.
+        
+    Returns
+    -------
+    stats : list
+        Same as the argument ``stats``.
+    """
+    if stats is None:
+        stats = []
+    if root.is_leaf():
+        c_R = np.average(root.data.vertices,axis=0) # Simplex barycenter
+        stats += [(depth,la.norm(c_R))]
+    else:
+        stats = get_tree_depth_vs_distance(root.left,depth=depth+1,stats=stats)
+        stats = get_tree_depth_vs_distance(root.right,depth=depth+1,stats=stats)
+    return stats
+
+# =============================================================================
+# stats = np.column_stack(get_tree_depth_vs_distance(partitions['explicit'][1]))
+# 
+# fig = plt.figure(1)
+# plt.clf()
+# ax = fig.add_subplot(111)
+# ax.plot(stats[1]+np.random.randn(stats.shape[1])*0.001,stats[0]+np.random.randn(stats.shape[1])*0.1,linestyle='none',marker='.')
+# =============================================================================
+    
+# ==> Does not yield a distinct relationship it seems, to scrap this idea...
+
 #%% Simulate implicit vs. semi-explicit MPC
 # - for each accuracy level
 # - ...
@@ -170,20 +237,26 @@ def f_delta_epsilon(root,theta):
         Epsilon-suboptimal commutation at theta.
     vertices : np.array
         Vertices of the simplex that theta is contained in.
+    Minv : np.array
+        Mixing matrix for finding the convex combination that makes theta in
+        this simplex.
     inputs : np.array
         Optimal inputs associated with delta at the vertices of the simplex.
     """
-    def check_containment(A,b):
-        """Check if theta \in {x : A*x<=b}"""
-        return np.all(A.dot(theta)<=b)
-    
-    # Check that parameter has not exited the partitioned set
-    if root.top and not check_containment(root.data.hrep_A,root.data.hrep_b):
-        raise RuntimeError('Parameter out of domain')
+    def check_containment(Minv,v0):
+        """
+        Check if theta is in simplex defined by base vertex v0 and mixing
+        matrix M.
+        """
+        alpha = Minv.dot(theta-v0)
+        alpha0 = 1.-sum(alpha)
+        eps_mach = np.finfo(np.float64).eps # machine epsilon precision
+        return (alpha0>=-eps_mach and alpha0<=1+eps_mach and
+                np.all([alpha[i]>=-eps_mach and alpha[i]<=1+eps_mach for i in range(len(alpha))]))
     
     # Browse down the tree
     if not root.is_leaf():
-        if check_containment(root.left.data.hrep_A,root.left.data.hrep_b):
+        if check_containment(root.left.data.Minv,root.left.data.vertices[0]):
             return f_delta_epsilon(root.left,theta)
         else:
             return f_delta_epsilon(root.right,theta)
@@ -191,8 +264,9 @@ def f_delta_epsilon(root,theta):
     # If we get here, it's a leaf which theta is guaranteed to be in
     delta = root.data.commutation
     vertices = root.data.vertices
+    Minv = root.data.Minv
     inputs = root.data.vertex_inputs
-    return delta, vertices, inputs
+    return delta, vertices, Minv, inputs
 
 def mpc_implicit(oracle,theta):
     """
@@ -255,10 +329,9 @@ def mpc_explicit(oracle,root,theta):
     u_eps_subopt : np.aray
         Epsilon-suboptimal input.
     """
-    vertices, inputs = f_delta_epsilon(root,theta)[1:]
+    vertices, Minv, inputs = f_delta_epsilon(root,theta)[1:]
     # Get mixing coefficients (i.e. theta = sum_i alpha_i*vertex_i)
-    M = np.column_stack([vx-vertices[0] for vx in vertices[1:]])
-    alpha = la.inv(M).dot(theta-vertices[0])
+    alpha = Minv.dot(theta-vertices[0])
     alpha = np.concatenate([[1.-sum(alpha)],alpha])
     # Directly get the epsilon-suboptimal input
     u_eps_subopt = inputs.T.dot(alpha)
@@ -307,7 +380,6 @@ for i in range(Nres):
         sim_offline[kind].append(simulator.run(x_0,label='$\epsilon_{\mathrm{a}}=%s$, $\epsilon_{\mathrm{r}}=%s$'%
                                                (as_si(absolute_errors[i],2),as_si(relative_errors[i],2))))
 
-#%%
 # Plots
 
 rc('text', usetex=True)
@@ -326,7 +398,7 @@ vel_min = -0.2e-3#min(np.min(sim_implicit.x[1]),
 vel_max = 0.2e-3#min(np.max(sim_implicit.x[1]),
               #np.max([np.max(sim_offline['semiexplicit'][i].x[1]) for i in range(Nres)]),
               #np.max([np.max(sim_offline['explicit'][i].x[1]) for i in range(Nres)]))
-fig = plt.figure(1,figsize=(7.,5.6))
+fig = plt.figure(2,figsize=(7.,5.6))
 plt.clf()
 lines = []
 labels = []
@@ -359,6 +431,10 @@ for k,j,ylabel,kind in zip([1,3,2,4],
     else:
         ax.set_ylim([vel_min*1e3,vel_max*1e3])
     plt.setp(ax.get_xticklabels(), visible=False)
+    if k==1:
+        ax.set_title('Semi-explicit')
+    elif k==2:
+        ax.set_title('Explicit')
 for k,kind in zip([5,6],['semiexplicit','explicit']):
     ax = fig.add_subplot(3,2,k)
     axs.append(ax)
@@ -390,7 +466,7 @@ lines, labels = [], []
 t_call_max = max(np.max(sim_implicit.t_call),
                  np.max([np.max(sim_offline['semiexplicit'][i].t_call) for i in range(Nres)]))
 t_call_min = np.min([np.min(sim_offline['explicit'][i].t_call) for i in range(Nres)])
-fig = plt.figure(2,figsize=(6.6,2.4))
+fig = plt.figure(3,figsize=(6.6,2.4))
 plt.clf()
 ax = fig.add_subplot(131)
 ax.grid()
@@ -402,6 +478,7 @@ plt.autoscale(tight=True)
 ax.set_ylim([t_call_min*1e3,t_call_max*1e3])
 ax.set_ylabel('Evaluation time [ms]')
 ax.set_xlabel('Number of orbits')
+ax.set_title('Implicit')
 ax2 = fig.add_subplot(132)
 ax2.grid()
 for i in range(Nres):
@@ -414,6 +491,7 @@ plt.autoscale(tight=True)
 ax2.set_ylim([t_call_min*1e3,t_call_max*1e3])
 plt.setp(ax2.get_yticklabels(), visible=False)
 ax2.set_xlabel('Number of orbits')
+ax2.set_title('Semi-explicit')
 ax3 = fig.add_subplot(133)
 ax3.grid()
 for i in range(Nres):
@@ -424,6 +502,7 @@ for i in range(Nres):
 plt.autoscale(tight=True)
 ax3.set_ylim([t_call_min*1e3,t_call_max*1e3])
 ax3.set_xlabel('Number of orbits')
+ax3.set_title('Explicit')
 plt.setp(ax3.get_yticklabels(), visible=False)
 plt.tight_layout(rect=[0,0.07,1,1])
 plt.subplots_adjust(hspace=.0,wspace=.0)
@@ -432,22 +511,108 @@ plt.figlegend(lines, labels, loc = 'lower center', ncol=5, labelspacing=0. , pro
 ax2.set_xticklabels(['']+[item.get_text() for item in ax2.get_xticklabels()[1:]])
 ax3.set_xticklabels(['']+[item.get_text() for item in ax3.get_xticklabels()[1:]])
 
-# =============================================================================
-# fig = plt.figure(1)
-# plt.clf()
-# ax = fig.add_subplot(111)
-# ax.plot(sim_out_implicit.t,sim_out_implicit.x[0],label=sim_out_implicit.label)
-# ax.plot(sim_out_semiexplicit.t,sim_out_semiexplicit.x[0],label=sim_out_semiexplicit.label)
-# ax.plot(sim_out_explicit.t,sim_out_explicit.x[0],label=sim_out_explicit.label)
-# #ax.plot(sim_out.t,sim_out.x[1])
-# 
-# fig = plt.figure(2)
-# plt.clf()
-# ax = fig.add_subplot(111)
-# ax.semilogy(sim_out_implicit.t,sim_out_implicit.t_call,label=sim_out_implicit.label)
-# ax.semilogy(sim_out_semiexplicit.t,sim_out_semiexplicit.t_call,label=sim_out_semiexplicit.label)
-# ax.semilogy(sim_out_explicit.t,sim_out_explicit.t_call,label=sim_out_explicit.label)
-# =============================================================================
+#%% Algorithm progress
+    
+def get_leaf_count(root,leaf_count=0):
+    """
+    Extract the leaf count of the tree.
+    
+    Parameters
+    ----------
+    root : Tree
+        Tree root.
+    leaf_count : int, optional
+        Leaf count (**you shouldn't pass this yourself**).
+        
+    Returns
+    -------
+    leaf_count : int
+        Maximum tree depth.
+    """
+    if not root.is_leaf():
+        return leaf_count+get_leaf_count(root.left,leaf_count=leaf_count)+get_leaf_count(root.right,leaf_count=leaf_count)
+    else:
+        return 1
+    
+leaf_counts = dict(semiexplicit=[], explicit=[])
+for i in range(Nres):
+    for kind in ['semiexplicit','explicit']:
+        leaf_counts[kind].append(get_leaf_count(partitions[kind][i]))
+        
+def get_progress(root,stats=None):
+    """
+    Extract algorithm progress statistics in terms of current volume closed,
+    current runtime and current leaf count.
+    
+    Parameters
+    ----------
+    root : Tree
+        Tree root.
+    stats : list, optional
+        Tuples (volume closed, current time, current leaf count). **Do not pass
+        this yourself, it gets filled in by the function**.
+        
+    Returns
+    -------
+    stats : list
+        Same as the argument ``stats``.
+    """
+    if stats is None:
+        stats = []
+    if root.is_leaf():
+        vol = simplex_volume(root.data.vertices)+(stats[-1][0] if len(stats)>0 else 0.)
+        time = root.data.timestamp
+        leaf = 1+(stats[-1][2] if len(stats)>0 else 0)
+        stats += [(vol,time,leaf)]
+    else:
+        stats = get_progress(root.left,stats=stats)
+        stats = get_progress(root.right,stats=stats)
+    return stats
 
-#%% 
+progress = dict(semiexplicit=[], explicit=[])
+for i in range(Nres):
+    for kind in ['semiexplicit','explicit']:
+        prog = np.column_stack(get_progress(partitions[kind][i]))
+        prog[1] -= prog[1][0]
+        # Normalize
+        for j in range(3):
+            prog[j] /= prog[j][-1]
+        progress[kind].append(prog)
 
+def set_font_size(ax,fontsize):
+    """Set font size of axis."""
+    for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
+                  ax.get_xticklabels() + ax.get_yticklabels()):
+        item.set_fontsize(fontsize)
+
+# Plot progress
+fig = plt.figure(4,figsize=(6,3.2))
+plt.clf()
+ax = fig.add_subplot(121)
+lines,labels = [],[]
+line, = ax.plot([0,1],[0,1],color='gray',linestyle=':',linewidth=1)
+lines.append(line)
+labels.append('linear')
+for i in range(Nres):
+    line, = ax.plot(progress['semiexplicit'][i][2],progress['semiexplicit'][i][0],
+                     linewidth=2)
+    lines.append(line)
+    labels.append(sim_offline[kind][i].label)
+ax.set_xlabel('Cell count fraction [-]')
+ax.set_ylabel('Volume fraction [-]')
+plt.autoscale(tight=True)
+ax.set_title('Semi-explicit')
+set_font_size(ax,15)
+ax = fig.add_subplot(122)
+ax.plot([0,1],[0,1],color='gray',linestyle=':',linewidth=1)
+for i in range(Nres):
+    ax.plot(progress['semiexplicit'][i][1],progress['semiexplicit'][i][0],
+            linewidth=2)
+ax.set_xlabel('Time fraction [-]')
+plt.autoscale(tight=True)
+ax.set_title('Explicit')
+set_font_size(ax,15)
+plt.setp(ax.get_yticklabels(), visible=False)
+plt.tight_layout(rect=[0,0.07,1,1])
+plt.subplots_adjust(hspace=.0,wspace=.0)
+plt.figlegend(lines, labels, loc = 'lower center', ncol=5, labelspacing=0. , prop={'size':9})

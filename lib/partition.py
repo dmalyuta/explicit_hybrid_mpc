@@ -7,6 +7,7 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import time
 import numpy as np
 
 from general import warning
@@ -134,6 +135,7 @@ def lcss(oracle,node,rho_max,animator=None,progressbar=None):
             if rho > rho_max:
                 # Close child with warning
                 warning('Encountered simplex with bad condition number (%.2f)'%(rho))
+                node.data.timestamp = time.time()
                 if animator is not None:
                     animator.update(Polytope(V=child.data.vertices,A=False),
                                     **anim_closed_leaf(node.data.commutation))
@@ -178,6 +180,8 @@ def lcss(oracle,node,rho_max,animator=None,progressbar=None):
     infeasible = np.isinf(bar_e_a_R)
     eps_suboptimal = bar_e_a_R<=oracle.eps_a or bar_e_r_R<=oracle.eps_r
     if infeasible or eps_suboptimal:
+        # Close leaf
+        node.data.timestamp = time.time()
         if animator is not None:
             animator.update(Polytope(V=node.data.vertices,A=False),
                             **anim_closed_leaf(node.data.commutation))
