@@ -150,11 +150,7 @@ class Simulator:
             x_prev = np.copy(x)
             v = self.state_estimation_noise(t,x,u)
             z = x+v if t>0 else x # "Measured" state
-            
-            t_start = time.time()
-            u = self.K(z)
-            t_call = time.time()-t_start
-            
+            u,t_call = self.K(z)            
             e = self.input_noise(t,x,u)
             if la.norm(u)==0:
                 e = np.zeros(e.shape)

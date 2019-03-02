@@ -134,6 +134,8 @@ class Oracle:
             Optimal commutation.
         J_opt : float
             Optimal cost.
+        t_solve : float
+            Solver time.
         """
         self.mpc.x0.value = theta
         if check_feasibility:
@@ -144,7 +146,8 @@ class Oracle:
             u_opt = self.mpc.u[0].value
             delta_opt = self.mpc.delta.value
             J_opt = self.minlp.value
-            return u_opt, delta_opt, J_opt
+            t_solve = self.minlp.solver_stats.solve_time
+            return u_opt, delta_opt, J_opt, t_solve
 
     def P_theta_delta(self,theta,delta):
         """
@@ -163,13 +166,16 @@ class Oracle:
             Optimal input value.
         J_opt : float
             Optimal cost.
+        t_solve : float
+            Solver time.
         """
         self.mpc.x0.value = theta
         self.delta_fixed.value = delta
         self.nlp.solve(**self.solver_options)
         J_opt = self.nlp.value
         u_opt = self.mpc.u[0].value
-        return u_opt, J_opt
+        t_solve = self.nlp.solver_stats.solve_time
+        return u_opt, J_opt, t_solve
     
     def V_R(self,R):
         """
@@ -281,62 +287,4 @@ class Oracle:
         self.min_V_except_delta.value = self.min_over_simplex_for_any_delta_except_ref.solve(**self.solver_options)
         self.find_more_optimal_commutation.solve(**self.solver_options)
         better_delta = self.mpc.delta.value
-        #print(self.find_more_optimal_commutation.value,self.eps_r*self.min_V_except_delta.value)
-        #self.min_over_simplex_for_any_delta.solve(**self.solver_options)
-        #print(self.min_V_except_delta.value,self.min_over_simplex_for_any_delta.value)
         return better_delta
-
-# =============================================================================
-# from mpc_library import SatelliteZ
-# mpc = SatelliteZ()
-# eps_a,eps_r = 1., 0.1
-# oracle = Oracle(mpc, eps_a=eps_a,eps_r=eps_r)
-# =============================================================================
-
-# =============================================================================
-# from mpc_library import Cart1D
-# mpc = Cart1D()
-# eps_a,eps_r = 1., 0.1
-# oracle = Oracle(mpc, eps_a=eps_a,eps_r=eps_r)
-# 
-# # Test baseline MINLP
-# u,delta = oracle.P_theta(np.array([0.05,0.04]))
-# print(u)
-# 
-# # Test fixed-commutation NLP
-# u2,J = oracle.P_theta_delta(np.array([0.0,0.0]),delta)
-# print(u2)
-# 
-# # Test find-feasible-commutation-in-simplex MINLP
-# #side=0.1
-# R = [np.array([0.0,0.0]),np.array([0.05,0.0]),np.array([0.0,0.04])]
-# delta_feas = oracle.V_R(R)
-# print(delta_feas)
-# =============================================================================
-
-# =============================================================================
-# # Test absolute error over-approximation
-# delta_ref = delta
-# V_delta_R = [oracle.P_theta_delta(vertex,delta_ref)[1] for vertex in R]
-# e_abs_max = oracle.bar_E_ar_R(R,V_delta_R,delta_ref)
-# print(e_abs_max)
-# 
-# # Test if R is inside the variability ball
-# x_o = np.array([0.5,0.2])
-# side = 0.05
-# R = [x_o,x_o+np.array([side,0.0]),x_o+np.array([0.0,side])]
-# delta_ref = delta
-# V_delta_R = [oracle.P_theta_delta(vertex,delta_ref)[1] for vertex in R]
-# in_variability_ball = oracle.in_variability_ball(R,V_delta_R,delta_ref)
-# print(in_variability_ball)
-# 
-# # Test finding a more optimal commutation in R
-# x_o = np.array([0.5,0.2])
-# side = 0.2
-# R = [x_o,x_o+np.array([side,0.0]),x_o+np.array([0.0,side])]
-# delta_ref = delta
-# V_delta_R = [oracle.P_theta_delta(vertex,delta_ref)[1] for vertex in R]
-# better_delta = oracle.D_delta_R(R,V_delta_R,delta_ref)
-# print(better_delta)
-# =============================================================================
-

@@ -364,7 +364,7 @@ class SatelliteZ(MPC):
         self.plant = Plant(pars['T_s'],A,B,E)
 
         # Setup the RMPC problem        
-        self.setup_RMPC(Q_coeff=3e-3)
+        self.setup_RMPC(Q_coeff=1e-2)
 
 class Cart1D(MPC):
     """

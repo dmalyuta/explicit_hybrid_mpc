@@ -7,6 +7,7 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import os
 import pickle
 import time
 import random
@@ -16,25 +17,26 @@ import matplotlib.pyplot as plt
 from matplotlib import rc
 
 import sys
-sys.path.append('lib/')
+sys.path.append(os.path.dirname(os.path.realpath(__file__))+'/lib/')
 from mpc_library import SatelliteZ
 from oracle import Oracle
 from polytope import Polytope
 from tools import Progress, delaunay, simplex_volume
 from partition import algorithm_call, ecc, lcss
 from simulator import Simulator
+from tools import mypause
 
-existing_data = None#'data/all_partitions.pkl' # None or filepath
+existing_data = 'data/all_partitions.pkl' # None or filepath
 
 # MPC law
 sat = SatelliteZ()
 
 if existing_data is None:
     # Parameters
-    Nres = 5 # How many "resolutions" to test
+    Nres = 4 # How many "resolutions" to test
     rho_max = 1000 # Maximum condition number
-    origin_neighborhood_fracs = np.array([0.01,0.03,0.1,0.25,0.5])#np.linspace(0.01,0.5,Nres)
-    relative_errors = np.array([0.01,0.05,0.1,1.0,2.0])#np.linspace(0.1,2.0,Nres)
+    origin_neighborhood_fracs = np.array([0.03,0.1,0.25,0.5])#np.linspace(0.01,0.5,Nres)
+    relative_errors = np.array([0.05,0.1,1.0,2.0])#np.linspace(0.1,2.0,Nres)
     
     # The set to partition
     Theta = Polytope(R=[(-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
@@ -164,14 +166,23 @@ def get_tree_depth(root,depth=0):
                    get_tree_depth(root.right,depth=depth+1))
     return depth
 
+psi_proxy = []
 tree_depths = dict(semiexplicit=[], explicit=[])
 for i in range(Nres):
     for kind in ['semiexplicit','explicit']:
         tree_depths[kind].append(get_tree_depth(partitions[kind][i]))
-        
-# TODO plot showing that tree depth increases as -log(x), to show that Theorem
-# 2 of L-CSS paper is verified practically
-# Do some kind of non-linear regressin maybe
+for i in range(Nres):
+    psi_proxy.append(absolute_errors[i]/np.max(absolute_errors)+
+                     relative_errors[i]/np.max(relative_errors))
+    
+fig = plt.figure(99,figsize=(4.66,2.68))
+plt.clf()
+ax = fig.add_subplot(111)
+for kind in ['semiexplicit','explicit']:
+    ax.semilogx(psi_proxy,tree_depths[kind],linestyle='none',marker='.',markersize=10)
+ax.grid()
+ax.set_xlabel('$\psi$ proxy [-]')
+ax.set_ylabel('$\\tau$ tree depth [-]')
 
 #%% Tree depth vs. distance from origin of simplex center
     
@@ -283,9 +294,11 @@ def mpc_implicit(oracle,theta):
     -------
     u_opt : np.aray
         Optimal input.
+    t_solve : float
+        Solver time.
     """
-    u_opt = oracle.P_theta(theta)[0]
-    return u_opt
+    u_opt,_,_,t_solve = oracle.P_theta(theta)
+    return u_opt, t_solve
 
 def mpc_semiexplicit(oracle,root,theta):
     """
@@ -305,10 +318,15 @@ def mpc_semiexplicit(oracle,root,theta):
     -------
     u_eps_subopt : np.aray
         Epsilon-suboptimal input.
+    t_solve : float
+        Evaluation time.
     """
+    t_start = time.time()
     delta_eps_subopt = f_delta_epsilon(root,theta)[0]
-    u_eps_subopt = oracle.P_theta_delta(theta,delta_eps_subopt)[0]
-    return u_eps_subopt
+    t_solve = time.time()-t_start
+    u_eps_subopt,_,t_optimization = oracle.P_theta_delta(theta,delta_eps_subopt)
+    t_solve += t_optimization
+    return u_eps_subopt, t_solve
 
 def mpc_explicit(oracle,root,theta):
     """
@@ -328,14 +346,18 @@ def mpc_explicit(oracle,root,theta):
     -------
     u_eps_subopt : np.aray
         Epsilon-suboptimal input.
+    t_solve : float
+        Evaluation time.
     """
+    t_start = time.time()
     vertices, Minv, inputs = f_delta_epsilon(root,theta)[1:]
     # Get mixing coefficients (i.e. theta = sum_i alpha_i*vertex_i)
     alpha = Minv.dot(theta-vertices[0])
     alpha = np.concatenate([[1.-sum(alpha)],alpha])
     # Directly get the epsilon-suboptimal input
     u_eps_subopt = inputs.T.dot(alpha)
-    return u_eps_subopt
+    t_solve = time.time()-t_start
+    return u_eps_subopt, t_solve
 
 # Run simulation with seed resetting (so that every simulation has the same
 # noise realization)
@@ -362,7 +384,10 @@ def as_si(x, ndp):
     """
     s = '{x:0.{ndp:d}e}'.format(x=x, ndp=ndp)
     m, e = s.split('e')
-    return r'{m:s}\cdot 10^{{{e:d}}}'.format(m=m, e=int(e))
+    if int(e)==0:
+        return r'{m:s}'.format(m=m)
+    else:
+        return r'{m:s}\cdot 10^{{{e:d}}}'.format(m=m, e=int(e))
 
 # Implicit MPC
 oracle = Oracle(sat,eps_a=1.,eps_r=1.) # Any eps_a,eps_r - just need P_theta()
@@ -379,87 +404,103 @@ for i in range(Nres):
         simulator = Simulator(lambda x: mpc_call(oracles[kind][i],partitions[kind][i],x),sat,T)
         sim_offline[kind].append(simulator.run(x_0,label='$\epsilon_{\mathrm{a}}=%s$, $\epsilon_{\mathrm{r}}=%s$'%
                                                (as_si(absolute_errors[i],2),as_si(relative_errors[i],2))))
-
+#%%
 # Plots
 
 rc('text', usetex=True)
 rc('font', family='serif')
 
 # Position and velocity response comparison
-pos_min = min(np.min(sim_implicit.x[0]),
-              np.min([np.min(sim_offline['semiexplicit'][i].x[0]) for i in range(Nres)]),
-              np.min([np.min(sim_offline['explicit'][i].x[0]) for i in range(Nres)]))
-pos_max = min(np.max(sim_implicit.x[0]),
-              np.max([np.max(sim_offline['semiexplicit'][i].x[0]) for i in range(Nres)]),
-              np.max([np.max(sim_offline['explicit'][i].x[0]) for i in range(Nres)]))
-vel_min = -0.2e-3#min(np.min(sim_implicit.x[1]),
-              #np.min([np.min(sim_offline['semiexplicit'][i].x[1]) for i in range(Nres)]),
-              #np.min([np.min(sim_offline['explicit'][i].x[1]) for i in range(Nres)]))
-vel_max = 0.2e-3#min(np.max(sim_implicit.x[1]),
-              #np.max([np.max(sim_offline['semiexplicit'][i].x[1]) for i in range(Nres)]),
-              #np.max([np.max(sim_offline['explicit'][i].x[1]) for i in range(Nres)]))
-fig = plt.figure(2,figsize=(7.,5.6))
-plt.clf()
-lines = []
-labels = []
-axs = []
-for k,j,ylabel,kind in zip([1,3,2,4],
-                           [0,1]*2,
-                           ['Position [mm]','Velocity [mm/s]']*2,
-                           ['semiexplicit','semiexplicit','explicit','explicit']):
-    ax = fig.add_subplot(3,2,k)
-    axs.append(ax)
-    ax.grid(color='lightgray')
-    line, = ax.plot(sim_implicit.t/T_per_orbit,sim_implicit.x[j]*1e3,color='gray',linewidth=2)
-    if k==1:
-        lines.append(line)
-        labels.append(sim_implicit.label)
-    for i in range(Nres):
-        line, = ax.plot(sim_offline[kind][i].t/T_per_orbit,sim_offline[kind][i].x[j]*1e3,
-                        linewidth=1)
+def plot_response(fig_num, res_idx):
+    """
+    Plot response of a simulation vs. implicit response.
+    
+    Parameters
+    ----------
+    fig_num : int
+        Figure number.
+    res_idx : int
+        Trial number corresponding to absolute, relative error setting.
+    """
+    colors = ['blue','red','green']
+    pos_min = min(np.min(sim_implicit.x[0]),
+                  np.min([np.min(sim_offline['semiexplicit'][i].x[0]) for i in range(Nres)]),
+                  np.min([np.min(sim_offline['explicit'][i].x[0]) for i in range(Nres)]))
+    pos_max = min(np.max(sim_implicit.x[0]),
+                  np.max([np.max(sim_offline['semiexplicit'][i].x[0]) for i in range(Nres)]),
+                  np.max([np.max(sim_offline['explicit'][i].x[0]) for i in range(Nres)]))
+    vel_min = -0.2e-3#min(np.min(sim_implicit.x[1]),
+                  #np.min([np.min(sim_offline['semiexplicit'][i].x[1]) for i in range(Nres)]),
+                  #np.min([np.min(sim_offline['explicit'][i].x[1]) for i in range(Nres)]))
+    vel_max = 0.2e-3#min(np.max(sim_implicit.x[1]),
+                  #np.max([np.max(sim_offline['semiexplicit'][i].x[1]) for i in range(Nres)]),
+                  #np.max([np.max(sim_offline['explicit'][i].x[1]) for i in range(Nres)]))
+    fig = plt.figure(fig_num,figsize=(5.59,4.3))
+    plt.clf()
+    lines = []
+    labels = []
+    axs = []
+    for k,j,ylabel,kind in zip([1,3,2,4],
+                               [0,1]*2,
+                               ['Position [mm]','Velocity [mm/s]']*2,
+                               ['semiexplicit','semiexplicit','explicit','explicit']):
+        ax = fig.add_subplot(3,2,k)
+        axs.append(ax)
+        ax.grid(color='lightgray')
+        line, = ax.plot(sim_implicit.t/T_per_orbit,sim_implicit.x[j]*1e3,color='gray',linewidth=2)
         if k==1:
             lines.append(line)
-            labels.append(sim_offline[kind][i].label)
-    if k==1 or k==3:
-        ax.set_ylabel(ylabel)
-    else:
-        plt.setp(ax.get_yticklabels(), visible=False)
-        plt.tick_params(axis='y',which='both',left=False,right=False)
-    plt.autoscale(tight=True)
-    if j==0:
-        ax.set_ylim([pos_min*1e3,pos_max*1e3])
-    else:
-        ax.set_ylim([vel_min*1e3,vel_max*1e3])
-    plt.setp(ax.get_xticklabels(), visible=False)
-    if k==1:
-        ax.set_title('Semi-explicit')
-    elif k==2:
-        ax.set_title('Explicit')
-for k,kind in zip([5,6],['semiexplicit','explicit']):
-    ax = fig.add_subplot(3,2,k)
-    axs.append(ax)
-    ax.grid(color='lightgray')
-    ax.plot(sim_implicit.t/T_per_orbit,sim_implicit.u[0]*1e6,color='gray',linewidth=2,label=sim_implicit.label)
-    for i in range(Nres):
-        ax.plot(sim_offline[kind][i].t/T_per_orbit,sim_offline[kind][i].u[0]*1e6,
-                label=sim_offline[kind][i].label,linewidth=0.5)
-    ax.set_xlabel('Number of orbits')
-    if k==5:
-        ax.set_ylabel('Input [$\mu$m/s]')
-    else:
-        plt.setp(ax.get_yticklabels(), visible=False)
-        plt.tick_params(axis='y',which='both',left=False,right=False)
-    plt.autoscale(tight=True)
-    ax.set_ylim([-40,40])
-plt.tight_layout(rect=[0,0.03,1,1])
-plt.subplots_adjust(hspace=.0,wspace=.0)
-fig.align_ylabels([axs[0],axs[1],axs[4]])
-plt.figlegend(lines, labels, loc = 'lower center', ncol=5, labelspacing=0. , prop={'size':9})
-
-yticklabels = ['']+[item.get_text() for item in axs[1].get_yticklabels()[1:]]
-axs[1].set_yticklabels(yticklabels)
-xticklabels = ['']+[item.get_text() for item in axs[-1].get_xticklabels()[1:]]
-axs[-1].set_xticklabels(xticklabels)
+            labels.append(sim_implicit.label)
+        for ii in range(len(res_idx)):
+            i = res_idx[ii]
+            line, = ax.plot(sim_offline[kind][i].t/T_per_orbit,sim_offline[kind][i].x[j]*1e3,
+                            linewidth=1,color=colors[ii])
+            if k==1:
+                lines.append(line)
+                labels.append(sim_offline[kind][i].label)
+        if k==1 or k==3:
+            ax.set_ylabel(ylabel)
+        else:
+            plt.setp(ax.get_yticklabels(), visible=False)
+            plt.tick_params(axis='y',which='both',left=False,right=False)
+        plt.autoscale(tight=True)
+        if j==0:
+            ax.set_ylim([pos_min*1e3,pos_max*1e3])
+        else:
+            ax.set_ylim([vel_min*1e3,vel_max*1e3])
+        plt.setp(ax.get_xticklabels(), visible=False)
+        if k==1:
+            ax.set_title('Semi-explicit')
+        elif k==2:
+            ax.set_title('Explicit')
+    for k,kind in zip([5,6],['semiexplicit','explicit']):
+        ax = fig.add_subplot(3,2,k)
+        axs.append(ax)
+        ax.grid(color='lightgray')
+        ax.plot(sim_implicit.t/T_per_orbit,sim_implicit.u[0]*1e6,color='gray',linewidth=2,label=sim_implicit.label)
+        for ii in range(len(res_idx)):
+            i = res_idx[ii]
+            ax.plot(sim_offline[kind][i].t/T_per_orbit,sim_offline[kind][i].u[0]*1e6,
+                    label=sim_offline[kind][i].label,linewidth=0.5 if i==3 else 1,color=colors[ii])
+        ax.set_xlabel('Number of orbits')
+        if k==5:
+            ax.set_ylabel('Input [$\mu$m/s]')
+        else:
+            plt.setp(ax.get_yticklabels(), visible=False)
+            plt.tick_params(axis='y',which='both',left=False,right=False)
+        plt.autoscale(tight=True)
+        ax.set_ylim([-50,50])
+    plt.tight_layout(rect=[0,0.05,1,1])
+    plt.subplots_adjust(hspace=.0,wspace=.0)
+    fig.align_ylabels([axs[0],axs[1],axs[4]])
+    plt.figlegend(lines, labels, loc = 'lower center', ncol=5, labelspacing=0. , prop={'size':9})
+    yticklabels = ['']+[item.get_text() for item in axs[1].get_yticklabels()[1:]]
+    axs[1].set_yticklabels(yticklabels)
+    xticklabels = [item.get_text() for item in axs[-1].get_xticklabels()[:-1]]+['']
+    axs[-2].set_xticklabels(xticklabels)
+    
+plot_response(fig_num=1,res_idx=[3,0])
+plt.gcf().savefig("figures/response.pdf",bbox_inches='tight',format='pdf',transparent=True)
 
 # MPC call time statistics
 lines, labels = [], []
@@ -510,6 +551,92 @@ plt.figlegend(lines, labels, loc = 'lower center', ncol=5, labelspacing=0. , pro
 
 ax2.set_xticklabels(['']+[item.get_text() for item in ax2.get_xticklabels()[1:]])
 ax3.set_xticklabels(['']+[item.get_text() for item in ax3.get_xticklabels()[1:]])
+
+# Bar plots of evaluation time
+x_start = 1
+barwidth = 0.25
+group_sep = barwidth # Separation distance between groups
+baropts = dict(width=barwidth,align='edge',capsize=5)
+default_colors = cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+
+fig = plt.figure(5,figsize=(5.35,2.36))
+plt.clf()
+bars,labels = [],[]
+ax = fig.add_subplot(111)
+ax.set_yscale('log')
+x_prev = x_start
+ax.bar(x_prev,np.median(sim_implicit.t_call)*1e3,
+       yerr=[[(np.median(sim_implicit.t_call)-np.min(sim_implicit.t_call))*1e3],
+             [(np.max(sim_implicit.t_call)-np.median(sim_implicit.t_call))*1e3]],
+       color='gray',**baropts)
+x_prev += barwidth
+for kind in ['semiexplicit','explicit']:
+    x_prev += group_sep
+    for i in range(Nres):
+        ax.bar(x_prev,np.median(sim_offline[kind][i].t_call)*1e3,
+               yerr=[[(np.median(sim_offline[kind][i].t_call)-np.min(sim_offline[kind][i].t_call))*1e3],
+                     [(np.max(sim_offline[kind][i].t_call)-np.median(sim_offline[kind][i].t_call))*1e3]],
+               color=default_colors[i],label=None if kind!='semiexplicit' else sim_offline[kind][i].label,**baropts)
+        x_prev += barwidth
+ax.set_ylim([0.01,1e2])
+# log grid
+gridopts = dict(linewidth=0.5,color='lightgray',linestyle='--',zorder=-1)
+for exponent in range(-2,3):
+    for mantissa in range(11):
+        ax.axhline(y=mantissa*10**(exponent),**gridopts)
+for x in np.arange(1,int(x_prev)+1,barwidth):
+    ax.axvline(x=x,**gridopts)
+# Labeling
+ax.set_ylabel('Evaluation time [ms]')
+xtick_pos = x_start+np.cumsum(np.array([barwidth/2,barwidth*(Nres+1)/2+group_sep,barwidth*Nres+group_sep]))
+ax.set_xticks(xtick_pos)
+ax.set_xticklabels(('implicit','semi-explicit','explicit'))
+# Legend
+plt.tight_layout(rect=[0,0.13,1,1])
+plt.figlegend(loc = 'lower center', ncol=2, labelspacing=0. , prop={'size':9})
+fig.savefig("figures/evaltime.pdf",bbox_inches='tight',format='pdf',transparent=True)
+
+# Bar plots of fuel consumption
+
+# Compute total delta-v usage
+total_deta_v = lambda u: np.sum(la.norm(u,axis=0))*1e3
+sim_implicit.deltav = total_deta_v(sim_implicit.u)
+for kind in ['semiexplicit','explicit']:
+    for i in range(Nres):
+        sim_offline[kind][i].deltav = total_deta_v(sim_offline[kind][i].u)
+
+baropts = dict(width=barwidth,align='edge',capsize=5,zorder=99)
+
+fig = plt.figure(6,figsize=(5.35,2.36))
+plt.clf()
+bars,labels = [],[]
+ax = fig.add_subplot(111)
+ax.set_yscale('log')
+x_prev = x_start
+for kind in ['semiexplicit','explicit']:
+    for i in range(Nres):
+        ax.bar(x_prev,(sim_offline[kind][i].deltav-sim_implicit.deltav)/sim_implicit.deltav*100,
+               color=default_colors[i],label=None if kind!='semiexplicit' else sim_offline[kind][i].label,**baropts)
+        x_prev += barwidth
+    x_prev += group_sep
+x_prev -= group_sep
+ax.set_ylim([0.1,10e2])
+# log grid
+gridopts = dict(linewidth=0.5,color='lightgray',linestyle='--',zorder=-1)
+for exponent in range(-2,3):
+    for mantissa in range(11):
+        ax.axhline(y=mantissa*10**(exponent),**gridopts)
+for x in np.arange(1,int(x_prev)+2*barwidth,barwidth):
+    ax.axvline(x=x,**gridopts)
+# Labeling
+ax.set_ylabel('$\Delta v$ overconsumption [$\%$]')
+xtick_pos = x_start+np.cumsum(np.array([barwidth*Nres/2,barwidth*Nres+group_sep]))
+ax.set_xticks(xtick_pos)
+ax.set_xticklabels(('semi-explicit','explicit'))
+# Legend
+plt.tight_layout(rect=[0,0.13,1,1])
+plt.figlegend(loc = 'lower center', ncol=2, labelspacing=0. , prop={'size':9})
+fig.savefig("figures/fuel.pdf",bbox_inches='tight',format='pdf',transparent=True)
 
 #%% Algorithm progress
     
@@ -586,23 +713,22 @@ def set_font_size(ax,fontsize):
         item.set_fontsize(fontsize)
 
 # Plot progress
-fig = plt.figure(4,figsize=(6,3.2))
+fontsize=12
+fig = plt.figure(4,figsize=(5.13,2.97))
 plt.clf()
-ax = fig.add_subplot(121)
+ax0 = fig.add_subplot(121)
 lines,labels = [],[]
-line, = ax.plot([0,1],[0,1],color='gray',linestyle=':',linewidth=1)
-lines.append(line)
-labels.append('linear')
+ax0.plot([0,1],[0,1],color='gray',linestyle=':',linewidth=1)
 for i in range(Nres):
-    line, = ax.plot(progress['semiexplicit'][i][2],progress['semiexplicit'][i][0],
+    line, = ax0.plot(progress['semiexplicit'][i][2],progress['semiexplicit'][i][0],
                      linewidth=2)
     lines.append(line)
     labels.append(sim_offline[kind][i].label)
-ax.set_xlabel('Cell count fraction [-]')
-ax.set_ylabel('Volume fraction [-]')
+ax0.set_xlabel('Cell count fraction [-]')
+ax0.set_ylabel('Volume fraction [-]')
 plt.autoscale(tight=True)
-ax.set_title('Semi-explicit')
-set_font_size(ax,15)
+ax0.set_title('Semi-explicit')
+set_font_size(ax0,fontsize)
 ax = fig.add_subplot(122)
 ax.plot([0,1],[0,1],color='gray',linestyle=':',linewidth=1)
 for i in range(Nres):
@@ -611,8 +737,236 @@ for i in range(Nres):
 ax.set_xlabel('Time fraction [-]')
 plt.autoscale(tight=True)
 ax.set_title('Explicit')
-set_font_size(ax,15)
+set_font_size(ax,fontsize)
 plt.setp(ax.get_yticklabels(), visible=False)
-plt.tight_layout(rect=[0,0.07,1,1])
+plt.tight_layout(rect=[0,0.1,1,1])
 plt.subplots_adjust(hspace=.0,wspace=.0)
-plt.figlegend(lines, labels, loc = 'lower center', ncol=5, labelspacing=0. , prop={'size':9})
+plt.figlegend(lines, labels, loc = 'lower center', ncol=2, labelspacing=0. , prop={'size':9})
+xticklabels = [item.get_text() for item in ax0.get_xticklabels()[:-1]]+['']
+ax0.set_xticklabels(xticklabels)
+fig.savefig("figures/progress.pdf",bbox_inches='tight',format='pdf',transparent=True)
+
+# Plot leaf count vs psi proxy
+leaf_counts = dict(semiexplicit=[], explicit=[])
+for i in range(Nres):
+    for kind in ['semiexplicit','explicit']:
+        leaf_counts[kind].append(get_leaf_count(partitions[kind][i]))
+#%%
+        
+fig = plt.figure(7,figsize=(5.11,6.32))
+plt.clf()
+ax1 = fig.add_subplot(311)
+for kind in ['semiexplicit','explicit']:
+    stats = [get_progress(partitions[kind][i]) for i in range(Nres)]
+    T_solve = [(stats[i][-1][1]-stats[i][0][1])//60 for i in range(Nres)]
+    ax1.loglog(psi_proxy,T_solve,marker='.',markersize=10,linestyle='none')
+    ax1.set_xlabel('$\psi$ proxy [-]')
+    ax1.set_ylabel('$T_{\mathrm{solve}}$ [min]')
+    ax1.grid()
+ax2 = fig.add_subplot(312)
+for kind in ['semiexplicit','explicit']:
+    M = [os.path.getsize('./data/partition_%s_%d.pkl'%(kind,i))/2**20 for i in range(Nres)]
+    ax2.loglog(psi_proxy,M,marker='.',markersize=10,linestyle='none')
+    ax2.set_xlabel('$\psi$ proxy [-]')
+    ax2.set_ylabel('$M$ [MB]')
+    ax2.grid()
+ax3 = fig.add_subplot(313)
+for kind in ['semiexplicit','explicit']:
+    leaf_counts = [get_leaf_count(partitions[kind][i]) for i in range(Nres)]
+    ax3.loglog(psi_proxy,leaf_counts,marker='.',markersize=10,linestyle='none')
+    ax3.set_xlabel('$\psi$ proxy [-]')
+    ax3.set_ylabel('$\lambda$ leaf count [-]')
+    ax3.grid()
+plt.tight_layout()
+fig.align_ylabels([ax1,ax2,ax3])
+
+#%% Print out results table
+
+kind_pretty = dict(semiexplicit='Semi-explicit',explicit='Explicit')
+
+print('$\epsilon_{\mathrm{a}}$ & $\epsilon_{\mathrm{r}}$ & $\\tau$ & $\lambda$ & '
+      '$T_{\mathrm{solve}}$ & $T_{\mathrm{query}}$ & $M$ \\\\ \hline \hline')
+
+for i in range(Nres-1,-1,-1):
+    for kind in ['semiexplicit','explicit']:
+        stats = get_progress(partitions[kind][i])
+        T_solve = (stats[-1][1]-stats[0][1])//60
+        print('%s & $%s$ & $%s$ & $%d$ & $%d$ & $%d$ & $%d$ & $%.2f$ \\\\'%
+              (kind_pretty[kind], # kind of MPC implementation
+               as_si(absolute_errors[i],2), # absolute error tolerance
+               as_si(relative_errors[i],2), # realtive error tolerance
+               get_tree_depth(partitions[kind][i]), # tree depth
+               get_leaf_count(partitions[kind][i]), # tree leaf count
+               T_solve, # [min] partition algrithm runtime
+               np.median(sim_offline[kind][i].t_call)*1e6, # [mus] online evoluation time
+               os.path.getsize('./data/partition_%s_%d.pkl'%(kind,i))/2**20))
+print('\hline')
+
+#%% Storage memory requirement theoretical minimums for the most refined partition
+
+mu_f = 64//8 # [B] Float size
+mu_i = 32//8 # [B] Integer size
+mu_b = 8//8 # [B] Boolean (char) size
+p = sat.n_x # Parameter dimension
+n_hat = sat.n_u # Optimal input dimension
+m = sat.Nu*sat.N # Commutation dimension
+
+# Storage model 1: store the vertices, compute mixing matrix online
+# Theoretical value for a perfect binary tree
+storage1_theory = dict(semiexplicit=None,explicit=None)
+leaves = get_leaf_count(partitions['semiexplicit'][0])
+storage1_theory['semiexplicit'] = (leaves+p)*mu_f*p+leaves*mu_i*(p+1)+leaves*m*mu_b
+storage1_theory['semiexplicit'] /= 2**20 # B->MB
+leaves = get_leaf_count(partitions['explicit'][0])
+storage1_theory['explicit'] = (leaves+p)*mu_f*p+leaves/2.*mu_i*(p+1)+leaves*((p+1)*mu_i+(p+1)*mu_f*n_hat)
+storage1_theory['explicit'] /= 2**20 # B->MB
+# Actual value for the obtained binary tree
+def get_memreq_storage1(root,kind,memreq=0.):
+    """
+    Get the theoretical minimum storage memory requirement for storage model 1
+    in which the cell vertices are stored and the mixing matrices is inverted
+    on-line.
+    
+    Parameters
+    ----------
+    root : Tree
+        Tree root.
+    kind : {'semiexplicit','explicit'}
+        Type of MPC implementation.
+    memreq : float, optional
+        Memory size requirement in bytes up until now (**you shouldn't pass
+        this yourself**).
+        
+    Returns
+    -------
+    memreq : float
+        Memory size requirement in bytes.
+    """
+    if not root.is_leaf():
+        if root.top:
+            # Store the Theta vertices (assume Theta is a simplex)
+            memreq += (p+1)*mu_f*p
+        # Store one more unique vertex from splitting
+        memreq += mu_f*p
+        # Store left child vertex references
+        memreq += mu_i*(p+1)
+        # Store right child vertex references, if it is a leaf and explicit implementation
+        if root.right.is_leaf() and kind=='explicit':
+            memreq += mu_i*(p+1)
+        # Go on to the children
+        memreq = get_memreq_storage1(root.left,kind,memreq)
+        memreq = get_memreq_storage1(root.right,kind,memreq)
+    else:
+        if kind=='semiexplicit':
+            # Store the epsilon-suboptimal commutation
+            memreq += mu_b*m
+        else:
+            # Store the optimal inputs at the vertices
+            memreq += mu_f*n_hat*(p+1)
+    return memreq
+
+storage1_numerical = dict(semiexplicit=get_memreq_storage1(partitions['semiexplicit'][0],'semiexplicit')/2**20,
+                          explicit=get_memreq_storage1(partitions['explicit'][0],'explicit')/2**20)
+
+# Storage model 2: store the inverted mixing matrix directly
+# Theoretical value for a perfect binary tree
+storage2_theory = dict(semiexplicit=None,explicit=None)
+leaves = get_leaf_count(partitions['semiexplicit'][0])
+storage2_theory['semiexplicit'] = leaves*mu_f*p*(p+1)+leaves*m*mu_b
+storage2_theory['semiexplicit'] /= 2**20 # B->MB
+leaves = get_leaf_count(partitions['explicit'][0])
+storage2_theory['explicit'] = 3./2.*leaves*mu_f*p*(p+1)+leaves*(p+1)*n_hat*mu_f
+storage2_theory['explicit'] /= 2**20 # B->MB
+# Actual value for the obtained binary tree
+def get_memreq_storage2(root,kind,memreq=0.):
+    """
+    Get the theoretical minimum storage memory requirement for storage model 2
+    in which the the mixing matrix is stored directly.
+    
+    Parameters
+    ----------
+    root : Tree
+        Tree root.
+    kind : {'semiexplicit','explicit'}
+        Type of MPC implementation.
+    memreq : float, optional
+        Memory size requirement in bytes up until now (**you shouldn't pass
+        this yourself**).
+        
+    Returns
+    -------
+    memreq : float
+        Memory size requirement in bytes.
+    """
+    if not root.is_leaf():
+        # Store left child base vertex and mixing matrix
+        memreq += mu_f*p*(p+1)
+        # Store right child base vertex and mixing matrix, if it is a leaf and
+        # explicit implementation
+        if root.right.is_leaf() and kind=='explicit':
+            memreq += mu_f*p*(p+1)
+        # Go on to the children
+        memreq = get_memreq_storage2(root.left,kind,memreq)
+        memreq = get_memreq_storage2(root.right,kind,memreq)
+    else:
+        if kind=='semiexplicit':
+            # Store the epsilon-suboptimal commutation
+            memreq += mu_b*m
+        else:
+            # Store the optimal inputs at the vertices
+            memreq += mu_f*n_hat*(p+1)
+    return memreq
+
+storage2_numerical = dict(semiexplicit=get_memreq_storage2(partitions['semiexplicit'][0],'semiexplicit')/2**20,
+                          explicit=get_memreq_storage2(partitions['explicit'][0],'explicit')/2**20)
+
+# Printout
+print('Storage model 1, semi-explicit: %.2f MB (theory), %.2f MB (numerical)'
+      %(storage1_theory['semiexplicit'],storage1_numerical['semiexplicit']))
+print('Storage model 1, explicit: %.2f MB (theory), %.2f MB (numerical)'
+      %(storage1_theory['explicit'],storage1_numerical['explicit']))
+print('Storage model 2, semi-explicit: %.2f MB (theory), %.2f MB (numerical)'
+      %(storage2_theory['semiexplicit'],storage2_numerical['semiexplicit']))
+print('Storage model 2, explicit: %.2f MB (theory), %.2f MB (numerical)'
+      %(storage2_theory['explicit'],storage2_numerical['explicit']))
+
+#%% Draw the partitions
+
+edge_style = dict(color='black',linewidth=0.1)
+
+def draw_partition(root,ax):
+    if root.top:
+        # Draw whole simplex
+        ax.plot(np.concatenate([root.data.vertices[:,0],[root.data.vertices[0,0]]]),
+                np.concatenate([root.data.vertices[:,1],[root.data.vertices[0,1]]]),**edge_style)
+    if not root.is_leaf():
+        # Find where the simplex gets split and draw that edge
+        new_vx_idx = np.argmax(np.sum(abs(root.data.vertices-root.left.data.vertices),axis=1))
+        new_vx = root.left.data.vertices[new_vx_idx]
+        vx_means = [0.5*(root.data.vertices[0]+root.data.vertices[1]),
+                    0.5*(root.data.vertices[0]+root.data.vertices[2]),
+                    0.5*(root.data.vertices[1]+root.data.vertices[2])]
+        best_fit = np.argmin(np.sum(abs(vx_means-new_vx),axis=1))
+        if best_fit==0:
+            root_vx = root.data.vertices[2]
+        elif best_fit==1:
+            root_vx = root.data.vertices[1]
+        else:
+            root_vx = root.data.vertices[0]
+        ax.plot([root_vx[0],new_vx[0]],[root_vx[1],new_vx[1]],**edge_style)
+        mypause(1e-3)
+        draw_partition(root.left,ax)
+        draw_partition(root.right,ax)
+        
+# Not too revealing... doesn't seem like there is a similar "dense at the origin"
+# type of deal happening?
+fig = plt.figure(8)
+plt.clf()
+ax = fig.add_subplot(111)
+partition = partitions['explicit'][0]
+partition.left.right.top = True
+partition.right.top = True
+draw_partition(partition.left.right,ax)
+draw_partition(partition.right,ax)
+partition.left.top = False
+partition.right.top = False

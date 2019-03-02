@@ -43,4 +43,4 @@ def draw(root,animator):
 sat = SatelliteZ()
 animator = Animator(1,sat)
 
-draw(partitions['explicit'][0],animator)
+draw(partitions['explicit'][-3],animator)

@@ -107,24 +107,9 @@ class Animator:
             self.axes[-1].set_xlabel(ax_labels[self.projections[i][0]])
             self.axes[-1].set_ylabel(ax_labels[self.projections[i][1]])
         plt.tight_layout(True,rect=[0.1, 0.03, 1, 0.95])
-        def mypause(interval):
-            """
-            See https://stackoverflow.com/questions/45729092/make-
-            interactive-matplotlib-window-not-pop-to-front-on-each-
-            update-windows-7/45734500#45734500
-            """
-            backend = plt.rcParams['backend']
-            if backend in matplotlib.rcsetup.interactive_bk:
-                figManager = matplotlib._pylab_helpers.Gcf.get_active()
-                if figManager is not None:
-                    canvas = figManager.canvas
-                    if canvas.figure.stale:
-                        canvas.draw()
-                    canvas.start_event_loop(interval)
-                    return
         plt.ion()
         plt.show(block=False)
-        self.draw = lambda: mypause(1e-3)
+        self.draw = lambda: mypause(1e-5)
         self.draw()
         
     def update(self,obj,mem=None,**kwargs):
@@ -226,6 +211,22 @@ class Animator:
             N = n+1
             p,n = self.numSubplots(N) # Recursive!
         return p
+
+def mypause(interval):
+    """
+    See https://stackoverflow.com/questions/45729092/make-
+    interactive-matplotlib-window-not-pop-to-front-on-each-
+    update-windows-7/45734500#45734500
+    """
+    backend = plt.rcParams['backend']
+    if backend in matplotlib.rcsetup.interactive_bk:
+        figManager = matplotlib._pylab_helpers.Gcf.get_active()
+        if figManager is not None:
+            canvas = figManager.canvas
+            if canvas.figure.stale:
+                canvas.draw()
+            canvas.start_event_loop(interval)
+            return
 
 def simplex_condition_number(R):
     """

@@ -3,4 +3,5 @@ __pycache__/
 sandbox/
 data/
 /**/*.pyc
-/**/.gitkeep
+/figures/*
+!/**/.gitkeep
