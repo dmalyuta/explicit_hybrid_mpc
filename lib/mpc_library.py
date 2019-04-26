@@ -366,6 +366,83 @@ class SatelliteZ(MPC):
         # Setup the RMPC problem        
         self.setup_RMPC(Q_coeff=1e-2)
 
+class SatelliteXY(MPC):
+    """
+    CWH (x,y)-dynamics with non-convex input constraint (off or on and
+    lower-bounded) and constraint tightening for noise robustness.
+    """
+    def __init__(self):
+        super().__init__()
+        # Parameters
+        self.N = 2 # Prediction horizon length
+        # Raw values
+        pars = {'mu': 3.986004418e14,  # [m^3*s^-2] Standard gravitational parameter
+                'R_E': 6378137.,       # [m] Earth mean radius
+                'h_E': 415e3,          # [m] Orbit height above Earth sea level
+                'T_s': 100,            # [s] Silent time
+                'pos_err_max': 10e-2,  # [m] Maximum position error
+                'vel_err_max': 1e-3,   # [m/s] Maximum velocity error
+                'delta_v_max': 2e-3,   # [m/s] Maximum input delta-v
+                'w_max': 50e-9,        # [m/s^2] Maximum exogenous acceleration (atmospheric drag)
+                'sigma_fix': 1e-6,     # [m/s] Fixed input error
+                'sigma_pos':2e-2,      # Position estimate error growth slope with position magnitude
+                'sigma_vel':1e-3,      # Velocity estimate error growth slope with velocity magnitude
+                'input_ang_err': 2.,   # [deg] Cone opening angle for input error
+                'p_max': 0.4e-2,       # [m] Maximum position estimate error
+                'v_max': 4e-6}         # [m/s] Maximum velocity estimate error
+        # Derived values
+        pars.update({'a': pars['h_E']+pars['R_E']})             # [m] Orbit radius
+        pars.update({'wo': np.sqrt(pars['mu']/pars['a']**3)})   # [rad/s] Orbital rate
+        pars.update({'delta_v_min': pars['delta_v_max']*0.01}) # [m/s] Min non-zero delta-v input (in each axis)
+        pars.update({'sigma_rcs': np.tan(np.deg2rad(pars['input_ang_err'])/2.)}) # Input error growth slope with input magnitude
+        self.pars = pars
+        
+        # Specifications
+        X = Polytope(R=[(-pars['pos_err_max'],pars['pos_err_max']),
+                        (-pars['pos_err_max'],pars['pos_err_max']),
+                        (-pars['vel_err_max'],pars['vel_err_max']),
+                        (-pars['vel_err_max'],pars['vel_err_max'])])
+        U_ext = Polytope(R=[(-pars['delta_v_max'],pars['delta_v_max']),
+                            (-pars['delta_v_max'],pars['delta_v_max'])])
+        U_int = Polytope(R=[(-pars['delta_v_min'],pars['delta_v_min']),
+                            (-pars['delta_v_min'],pars['delta_v_min'])])
+        # uncertainty set
+        P = uc.UncertaintySet() # Left empty for chosen_spec=='nominal'
+        n = 2 # Position dimension
+        one,I,O = np.ones(n),np.eye(n),np.zeros((n,n))
+        P.addIndependentTerm('process',lb=-pars['w_max']*one,ub=pars['w_max']*one)
+        P.addIndependentTerm('state',lb=-np.concatenate([pars['p_max']*one,
+                                                         pars['v_max']*one]),
+                                     ub=np.concatenate([pars['p_max']*one,
+                                                        pars['v_max']*one]))
+        P.addDependentTerm('input',uc.DependencyDescription(
+                           lambda: cvx.Constant(pars['sigma_fix']),pq=2),dim=n)
+        P.addDependentTerm('state',uc.DependencyDescription(
+                           lambda nfx: pars['sigma_pos']*nfx,pq=np.inf,px=2,
+                           Fx=np.hstack((I,O))),dim=n,L=np.vstack((I,O)))
+        P.addDependentTerm('state',uc.DependencyDescription(
+                           lambda nfx: pars['sigma_vel']*nfx,pq=np.inf,px=2,
+                           Fx=np.hstack((O,I))),dim=n,L=np.vstack((O,I)))
+        P.addDependentTerm('input',uc.DependencyDescription(
+                           lambda nfu: pars['sigma_rcs']*nfu,pq=2,pu=2),dim=n)
+        self.specs = Specifications(X,(U_int,U_ext),P)
+        
+        # Make plant
+        # continuous-time
+        self.n_x, self.n_u = 4,2
+        A_c = np.array([[0,1,0,0],[3*pars['wo']**2,0,0,2*pars['wo']],[0,0,0,1],[0,-2*pars['wo'],0,0]])
+        B_c = np.array([[0,0],[1,0],[0,0],[0,1]])
+        E_c = B_c.copy()
+        # discrete-time
+        A = sla.expm(A_c*pars['T_s'])
+        B = A.dot(B_c)
+        M = np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
+        E = sla.expm(M)[:self.n_x,self.n_x:]
+        self.plant = Plant(pars['T_s'],A,B,E)
+
+        # Setup the RMPC problem        
+        self.setup_RMPC(Q_coeff=1e-2)
+
 class Cart1D(MPC):
     """
     Double integrator dynamics with a non-convex input constraint (upper and

@@ -79,7 +79,7 @@ def ecc(oracle,node,animator=None,progressbar=None):
                 volume_closed = simplex_volume(node.data.vertices)
                 progressbar.update(volume_increment=volume_closed)
                 
-def lcss(oracle,node,rho_max,animator=None,progressbar=None):
+def lcss(oracle,node,animator=None,progressbar=None):
     """
     Implementation of [Malyuta2019b] Algorithm 1 lines 4-20. Pass a tree root
     node and this grows the tree until its leaves are associated with an
@@ -100,8 +100,6 @@ def lcss(oracle,node,rho_max,animator=None,progressbar=None):
     node : Tree
         Tree root. Sufficient that it just holds node.data.vertices for the
         simplex vertices.
-    rho_max : float
-        Maximum tolerated simplex condition number.
     animator : Animator
         Pass an Animator object to animate the simplicial partitioning.
     progressbar : Progress
@@ -131,20 +129,8 @@ def lcss(oracle,node,rho_max,animator=None,progressbar=None):
         if progressbar is not None:
             progressbar.update(count_increment=1)
         for child in [node.left,node.right]:
-            rho = simplex_condition_number(child.data.vertices)
-            if rho > rho_max:
-                # Close child with warning
-                warning('Encountered simplex with bad condition number (%.2f)'%(rho))
-                node.data.timestamp = time.time()
-                if animator is not None:
-                    animator.update(Polytope(V=child.data.vertices,A=False),
-                                    **anim_closed_leaf(node.data.commutation))
-                if progressbar is not None:
-                    volume_closed = simplex_volume(child.data.vertices)
-                    progressbar.update(volume_increment=volume_closed)
-            else:
-                # Add open leaf
-                lcss(oracle,child,rho_max,animator,progressbar)
+            # Add open leaf
+            lcss(oracle,child,animator,progressbar)
 
     def update_vertex_costs(v_mid,v_combo_idx,delta,old_vertex_inputs,old_vertex_costs):
         """
@@ -165,7 +151,7 @@ def lcss(oracle,node,rho_max,animator=None,progressbar=None):
         old_vertex_costs : np.array
             Array of existing pre-computed vertex costs.
         """
-        u_opt_v_mid, V_delta_v_mid = oracle.P_theta_delta(theta=v_mid,delta=delta)
+        u_opt_v_mid, V_delta_v_mid = oracle.P_theta_delta(theta=v_mid,delta=delta)[:2]
         vertex_inputs_S_1,vertex_inputs_S_2 = old_vertex_inputs.copy(),old_vertex_inputs.copy()
         vertex_costs_S_1,vertex_costs_S_2 = old_vertex_costs.copy(),old_vertex_costs.copy()
         vertex_inputs_S_1[v_combo_idx[0]] = u_opt_v_mid
@@ -207,7 +193,7 @@ def lcss(oracle,node,rho_max,animator=None,progressbar=None):
                 node.data.commutation = delta_star
                 node.data.vertex_costs = new_vertex_costs
                 node.data.vertex_inputs = new_vertex_inputs
-                lcss(oracle,node,rho_max,animator,progressbar)
+                lcss(oracle,node,animator,progressbar)
             else:
                 S_1,S_2,v_idx = split_along_longest_edge(node.data.vertices)
                 # Re-compute vertex costs

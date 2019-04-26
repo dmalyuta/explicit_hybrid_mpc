@@ -34,7 +34,6 @@ sat = SatelliteZ()
 if existing_data is None:
     # Parameters
     Nres = 4 # How many "resolutions" to test
-    rho_max = 1000 # Maximum condition number
     origin_neighborhood_fracs = np.array([0.03,0.1,0.25,0.5])#np.linspace(0.01,0.5,Nres)
     relative_errors = np.array([0.05,0.1,1.0,2.0])#np.linspace(0.1,2.0,Nres)
     
@@ -78,7 +77,7 @@ if existing_data is None:
             
             # Epsilon-suboptimal partition
             t_start = time.time()
-            algorithm_call(lcss,oracles[kind][i],partition,rho_max=rho_max,progressbar=progressbar)
+            algorithm_call(lcss,oracles[kind][i],partition,progressbar=progressbar)
             t_elapsed = time.time()-t_start
             runtimes[kind].append(t_elapsed)
             
