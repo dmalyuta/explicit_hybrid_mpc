@@ -18,7 +18,7 @@ from matplotlib import rc
 
 import sys
 sys.path.append(os.path.dirname(os.path.realpath(__file__))+'/lib/')
-from mpc_library import SatelliteZ
+from mpc_library import SatelliteXY
 from oracle import Oracle
 from polytope import Polytope
 from tools import Progress, delaunay, simplex_volume
@@ -26,27 +26,30 @@ from partition import algorithm_call, ecc, lcss
 from simulator import Simulator
 from tools import mypause
 
-existing_data = 'data/all_partitions.pkl' # None or filepath
+existing_data = None#'data/all_partitions.pkl' # None or filepath
 
 # MPC law
-sat = SatelliteZ()
+sat = SatelliteXY()
 
 if existing_data is None:
     # Parameters
-    Nres = 4 # How many "resolutions" to test
-    origin_neighborhood_fracs = np.array([0.03,0.1,0.25,0.5])#np.linspace(0.01,0.5,Nres)
-    relative_errors = np.array([0.05,0.1,1.0,2.0])#np.linspace(0.1,2.0,Nres)
+    Nres = 1 # How many "resolutions" to test
+    origin_neighborhood_fracs = np.array([0.5])#0.03,0.1,0.25,0.5])#np.linspace(0.01,0.5,Nres)
+    relative_errors = np.array([2.0])#0.05,0.1,1.0,2.0])#np.linspace(0.1,2.0,Nres)
     
     # The set to partition
     Theta = Polytope(R=[(-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
+                        (-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
+                        (-sat.pars['vel_err_max'],sat.pars['vel_err_max']),
                         (-sat.pars['vel_err_max'],sat.pars['vel_err_max'])])
     Theta = np.row_stack(Theta.V)
     
     # Generate oracles
     absolute_errors = np.empty(Nres) # Filled in based on origin_neighborhood_fracs
     oracles = dict(explicit=[],semiexplicit=[])
+    kinds = ['explicit']#,'semiexplicit']
     for i in range(Nres):
-        for kind in ['explicit','semiexplicit']:
+        for kind in kinds:
             # Make an oracle with a temporary absolute error
             oracle = Oracle(sat,eps_a=1.,eps_r=origin_neighborhood_fracs[i],kind=kind)
             absolute_errors[i] = np.max([oracle.P_theta(theta=vx)[2] for vx in
@@ -57,7 +60,7 @@ if existing_data is None:
     partitions = dict(explicit=[],semiexplicit=[])
     runtimes = dict(explicit=[],semiexplicit=[])
     for i in range(Nres):
-        for kind in ['explicit','semiexplicit']:
+        for kind in kinds:
             
             print('\n\n %s %d \n\n'%(kind,i))
             
@@ -107,8 +110,9 @@ else:
     # Re-make the oracles
     sat = SatelliteZ()
     oracles = dict(explicit=[],semiexplicit=[])
+    kinds = list(oracles.keys())
     for i in range(Nres):
-        for kind in ['explicit','semiexplicit']:
+        for kind in kinds:
             oracles[kind].append(Oracle(sat,eps_a=absolute_errors[i],eps_r=relative_errors[i],kind=kind))
     
 #%% Post-process
@@ -139,7 +143,7 @@ def gen_Minv(root):
         root.data.Minv = Minv(root.data.vertices)
 
 for i in range(Nres):
-    for kind in ['explicit','semiexplicit']:
+    for kind in kinds:
         gen_Minv(partitions[kind][i])    
 
 #%% Maximum tree depth plot
@@ -168,7 +172,7 @@ def get_tree_depth(root,depth=0):
 psi_proxy = []
 tree_depths = dict(semiexplicit=[], explicit=[])
 for i in range(Nres):
-    for kind in ['semiexplicit','explicit']:
+    for kind in kinds:
         tree_depths[kind].append(get_tree_depth(partitions[kind][i]))
 for i in range(Nres):
     psi_proxy.append(absolute_errors[i]/np.max(absolute_errors)+
@@ -177,7 +181,7 @@ for i in range(Nres):
 fig = plt.figure(99,figsize=(4.66,2.68))
 plt.clf()
 ax = fig.add_subplot(111)
-for kind in ['semiexplicit','explicit']:
+for kind in kinds:
     ax.semilogx(psi_proxy,tree_depths[kind],linestyle='none',marker='.',markersize=10)
 ax.grid()
 ax.set_xlabel('$\psi$ proxy [-]')
@@ -397,7 +401,7 @@ sim_implicit = simulator.run(np.array([sat.pars['pos_err_max'],sat.pars['vel_err
 # Semi-explicit and explicit MPC
 sim_offline = dict(semiexplicit=[],explicit=[])
 for i in range(Nres):
-    for kind in ['explicit','semiexplicit']:
+    for kind in kinds:
         random.seed(1)
         mpc_call = mpc_explicit if kind=='explicit' else mpc_semiexplicit
         simulator = Simulator(lambda x: mpc_call(oracles[kind][i],partitions[kind][i],x),sat,T)
@@ -472,7 +476,7 @@ def plot_response(fig_num, res_idx):
             ax.set_title('Semi-explicit')
         elif k==2:
             ax.set_title('Explicit')
-    for k,kind in zip([5,6],['semiexplicit','explicit']):
+    for k,kind in zip([5,6],kinds):
         ax = fig.add_subplot(3,2,k)
         axs.append(ax)
         ax.grid(color='lightgray')
@@ -569,7 +573,7 @@ ax.bar(x_prev,np.median(sim_implicit.t_call)*1e3,
              [(np.max(sim_implicit.t_call)-np.median(sim_implicit.t_call))*1e3]],
        color='gray',**baropts)
 x_prev += barwidth
-for kind in ['semiexplicit','explicit']:
+for kind in kinds:
     x_prev += group_sep
     for i in range(Nres):
         ax.bar(x_prev,np.median(sim_offline[kind][i].t_call)*1e3,
@@ -600,7 +604,7 @@ fig.savefig("figures/evaltime.pdf",bbox_inches='tight',format='pdf',transparent=
 # Compute total delta-v usage
 total_deta_v = lambda u: np.sum(la.norm(u,axis=0))*1e3
 sim_implicit.deltav = total_deta_v(sim_implicit.u)
-for kind in ['semiexplicit','explicit']:
+for kind in kinds:
     for i in range(Nres):
         sim_offline[kind][i].deltav = total_deta_v(sim_offline[kind][i].u)
 
@@ -612,7 +616,7 @@ bars,labels = [],[]
 ax = fig.add_subplot(111)
 ax.set_yscale('log')
 x_prev = x_start
-for kind in ['semiexplicit','explicit']:
+for kind in kinds:
     for i in range(Nres):
         ax.bar(x_prev,(sim_offline[kind][i].deltav-sim_implicit.deltav)/sim_implicit.deltav*100,
                color=default_colors[i],label=None if kind!='semiexplicit' else sim_offline[kind][i].label,**baropts)
@@ -662,7 +666,7 @@ def get_leaf_count(root,leaf_count=0):
     
 leaf_counts = dict(semiexplicit=[], explicit=[])
 for i in range(Nres):
-    for kind in ['semiexplicit','explicit']:
+    for kind in kinds:
         leaf_counts[kind].append(get_leaf_count(partitions[kind][i]))
         
 def get_progress(root,stats=None):
@@ -697,7 +701,7 @@ def get_progress(root,stats=None):
 
 progress = dict(semiexplicit=[], explicit=[])
 for i in range(Nres):
-    for kind in ['semiexplicit','explicit']:
+    for kind in kinds:
         prog = np.column_stack(get_progress(partitions[kind][i]))
         prog[1] -= prog[1][0]
         # Normalize
@@ -748,14 +752,14 @@ fig.savefig("figures/progress.pdf",bbox_inches='tight',format='pdf',transparent=
 # Plot leaf count vs psi proxy
 leaf_counts = dict(semiexplicit=[], explicit=[])
 for i in range(Nres):
-    for kind in ['semiexplicit','explicit']:
+    for kind in kinds:
         leaf_counts[kind].append(get_leaf_count(partitions[kind][i]))
 #%%
         
 fig = plt.figure(7,figsize=(5.11,6.32))
 plt.clf()
 ax1 = fig.add_subplot(311)
-for kind in ['semiexplicit','explicit']:
+for kind in kinds:
     stats = [get_progress(partitions[kind][i]) for i in range(Nres)]
     T_solve = [(stats[i][-1][1]-stats[i][0][1])//60 for i in range(Nres)]
     ax1.loglog(psi_proxy,T_solve,marker='.',markersize=10,linestyle='none')
@@ -763,14 +767,14 @@ for kind in ['semiexplicit','explicit']:
     ax1.set_ylabel('$T_{\mathrm{solve}}$ [min]')
     ax1.grid()
 ax2 = fig.add_subplot(312)
-for kind in ['semiexplicit','explicit']:
+for kind in kinds:
     M = [os.path.getsize('./data/partition_%s_%d.pkl'%(kind,i))/2**20 for i in range(Nres)]
     ax2.loglog(psi_proxy,M,marker='.',markersize=10,linestyle='none')
     ax2.set_xlabel('$\psi$ proxy [-]')
     ax2.set_ylabel('$M$ [MB]')
     ax2.grid()
 ax3 = fig.add_subplot(313)
-for kind in ['semiexplicit','explicit']:
+for kind in kinds:
     leaf_counts = [get_leaf_count(partitions[kind][i]) for i in range(Nres)]
     ax3.loglog(psi_proxy,leaf_counts,marker='.',markersize=10,linestyle='none')
     ax3.set_xlabel('$\psi$ proxy [-]')
@@ -787,7 +791,7 @@ print('$\epsilon_{\mathrm{a}}$ & $\epsilon_{\mathrm{r}}$ & $\\tau$ & $\lambda$ &
       '$T_{\mathrm{solve}}$ & $T_{\mathrm{query}}$ & $M$ \\\\ \hline \hline')
 
 for i in range(Nres-1,-1,-1):
-    for kind in ['semiexplicit','explicit']:
+    for kind in kinds:
         stats = get_progress(partitions[kind][i])
         T_solve = (stats[-1][1]-stats[0][1])//60
         print('%s & $%s$ & $%s$ & $%d$ & $%d$ & $%d$ & $%d$ & $%.2f$ \\\\'%

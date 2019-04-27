@@ -164,7 +164,7 @@ class MPC:
             return constraints
         
         self.make_constraints = make_constraints
-    
+
 class RandomSystem(MPC):
     """
     Random controllable n-dimensional generalized oscillator.
@@ -374,7 +374,7 @@ class SatelliteXY(MPC):
     def __init__(self):
         super().__init__()
         # Parameters
-        self.N = 2 # Prediction horizon length
+        self.N = 3 # Prediction horizon length
         # Raw values
         pars = {'mu': 3.986004418e14,  # [m^3*s^-2] Standard gravitational parameter
                 'R_E': 6378137.,       # [m] Earth mean radius
@@ -430,8 +430,14 @@ class SatelliteXY(MPC):
         # Make plant
         # continuous-time
         self.n_x, self.n_u = 4,2
-        A_c = np.array([[0,1,0,0],[3*pars['wo']**2,0,0,2*pars['wo']],[0,0,0,1],[0,-2*pars['wo'],0,0]])
-        B_c = np.array([[0,0],[1,0],[0,0],[0,1]])
+        A_c = np.array([[0.,0.,1.,0.],
+                        [0.,0.,0.,1.],
+                        [3.*pars['wo']**2,0.,0.,2.*pars['wo']],
+                        [0.,0.,-2.*pars['wo'],0.]])
+        B_c = np.array([[0.,0.],
+                        [0.,0.],
+                        [1.,0.],
+                        [0.,1.]])
         E_c = B_c.copy()
         # discrete-time
         A = sla.expm(A_c*pars['T_s'])
