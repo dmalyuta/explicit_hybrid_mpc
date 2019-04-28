@@ -7,6 +7,7 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import glob
 import itertools
 import primefac
 import math
@@ -18,6 +19,7 @@ import progressbar
 import matplotlib
 import matplotlib.pyplot as plt
 
+import global_vars
 from tree import Tree, NodeData
 from polytope import Polytope
 
@@ -227,6 +229,17 @@ def mypause(interval):
                 canvas.draw()
             canvas.start_event_loop(interval)
             return
+
+def get_nodes_in_queue():
+    """
+    Get subtree nodes in the multi-process partitioning queue.
+    
+    Returns
+    -------
+    : list
+        List of node files.
+    """
+    return glob.glob(global_vars.NODE_DIR+'node_*.pkl')
 
 def simplex_condition_number(R):
     """

@@ -7,15 +7,23 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import sys
+sys.path.append('../')
+
+import os
+import glob
 import time
+import fcntl
+import pickle
 import numpy as np
 
+import global_vars
 from general import warning
-from tree import NodeData
-from tools import split_along_longest_edge, simplex_volume, simplex_condition_number
+from tree import NodeData, Tree
+from tools import split_along_longest_edge, simplex_volume, simplex_condition_number, get_nodes_in_queue
 from polytope import Polytope
 
-def ecc(oracle,node,animator=None,progressbar=None):
+def ecc(oracle,node,location,animator=None,progressbar=None):
     """
     Implementation of [Malyuta2019a] Algorithm 2 lines 4-16. Pass a tree root
     node and this grows the tree until its leaves are feasible partition cells.
@@ -33,9 +41,12 @@ def ecc(oracle,node,animator=None,progressbar=None):
     node : Tree
         Tree root. Sufficient that it just holds node.data.vertices for the
         simplex vertices.
-    animator : Animator
+    location : string
+        Location in tree of this node. String where '0' at index i means take
+        left child, '1' at index i means take right child (at depth value i).
+    animator : Animator, optional
         Pass an Animator object to animate the simplicial partitioning.
-    progressbar : Progress
+    progressbar : Progress, optional
         Pass a Progress object to print partitioning progress.
     """
     if animator is not None:
@@ -60,8 +71,13 @@ def ecc(oracle,node,animator=None,progressbar=None):
             if progressbar is not None:
                 progressbar.update(count_increment=1)
             # Recursive call for each resulting simplex
-            ecc(oracle,node.left,animator,progressbar)
-            ecc(oracle,node.right,animator,progressbar)
+            if len(get_nodes_in_queue())<global_vars.N_PROC:
+                # Save the right child to a separate file, to be partitioned by
+                # another thread
+                pickle.dump(node.left,open(global_vars.NODE_DIR+('node_%s.pkl'%(location+'0')),'wb'))
+            else:
+                ecc(oracle,node.left,location+'0',animator,progressbar)
+            ecc(oracle,node.right,location+'1',animator,progressbar)
         else:
             # Assign feasible commutation to simplex
             vertex_inputs_and_costs = [oracle.P_theta_delta(theta=vertex,delta=delta_hat)
@@ -226,7 +242,7 @@ def lcss(oracle,node,animator=None,progressbar=None):
                                    vertex_inputs=vertex_inputs_S_2)
             add(child_left,child_right)
 
-def algorithm_call(algorithm,oracle,root,**kwargs):
+def algorithm_call(algorithm,oracle,root,location,**kwargs):
     """
     Grow an initial binary tree given by root using algorithm() (either
     ``ecc()`` or ``lcss()``).
@@ -244,8 +260,98 @@ def algorithm_call(algorithm,oracle,root,**kwargs):
         Passed on to algorithm().
     """
     if root.is_leaf():
-        algorithm(oracle,root,**kwargs)
+        algorithm(oracle,root,location,**kwargs)
     else:
-        algorithm_call(algorithm,oracle,root.left,**kwargs)
-        algorithm_call(algorithm,oracle,root.right,**kwargs)
+        algorithm_call(algorithm,oracle,root.left,location+'0',**kwargs)
+        algorithm_call(algorithm,oracle,root.right,location+'1',**kwargs)
             
+def spinner(proc_num,algorithm_call,wait_time=5.):
+    """
+    Parameters
+    ----------
+    proc_num : int
+        Process number.
+    algorithm_call : callable
+        Callable algorithm with signature algorithm_call(root,location) where
+        root (Tree) is the subtree root and location (string) is the subtree
+        root's location in the main tree.
+    wait_time : float, optional
+        How many seconds to wait before checking the tree node queue.
+    """
+    def set_status(active):
+        """
+        Set process status.
+        
+        Parameters
+        ----------
+        active : int
+            Process status (1: active, 0: idle).
+        """
+        status = open('status.txt','r').readline()
+        status = status[:proc_num]+str(active)+status[proc_num+1:]
+        open('status.txt','w').write(status)
+    
+    def append_to_tree(tree,branch,location):
+        """
+        Appends branch to tree at location.
+        **Caution**: modifies ``tree`` (passed by reference).
+        
+        Parameters
+        ----------
+        tree : Tree
+            The tree to append to.
+        branch : Tree
+            The branch to be appended.
+        location : string
+            The location at which the branch is to be appended, specified as a
+            string of '0' and '1' where '0' at index i means take left child,
+            '1' at index i means take right child. Index i corresponds to depth
+            level i.
+        """
+        # Browse to location in tree
+        cursor = tree
+        for i in range(len(location)):
+            cursor = cursor.left if location[i]=='0' else cursor.right
+        # At this point, cursor.data=branch.data (same starting node)
+        if not branch.is_leaf():
+            cursor.left = branch.left
+            cursor.right = branch.right
+        else:
+            cursor.data = branch.data
+    
+    mutex = open('mutex','w')
+    while True:
+        time.sleep(wait_time)
+        nodes_in_queue = get_nodes_in_queue()
+        #print(nodes_in_queue)
+        #print(os.listdir('./data/'))
+        if len(nodes_in_queue)>0:
+            # Try to get a node from the queue
+            busy = False
+            try:
+                fcntl.lockf(mutex,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except IOError:
+                # Another process is currently reading the queue. Check back later
+                busy = True
+            if busy:
+                continue
+            #print('Reading %s'%(nodes_in_queue[0]))
+            subtree_file = open(nodes_in_queue[0],'rb')
+            subtree = pickle.load(subtree_file)
+            subtree_location = nodes_in_queue[0][len(global_vars.NODE_DIR+'node_'):-4]
+            os.remove(nodes_in_queue[0])
+            set_status(1)
+            fcntl.lockf(mutex,fcntl.LOCK_UN)
+            # Partition this node
+            algorithm_call(subtree,subtree_location)
+            # Update the full tree
+            #print('Done... ')
+            fcntl.lockf(mutex,fcntl.LOCK_EX)
+            #print('saving... ')
+            maintree = pickle.load(open(global_vars.TREE_FILE,'rb'))
+            append_to_tree(maintree,subtree,subtree_location)
+            pickle.dump(maintree,open(global_vars.TREE_FILE,'wb'))
+            set_status(0)
+            fcntl.lockf(mutex,fcntl.LOCK_UN)
+            #print('saved')
+    mutex.close()

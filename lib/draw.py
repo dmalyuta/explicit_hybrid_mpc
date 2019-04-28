@@ -7,6 +7,9 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import pickle
+
+import global_vars
 from mpc_library import SatelliteZ
 from tools import Animator
 from polytope import Polytope
@@ -43,4 +46,5 @@ def draw(root,animator):
 sat = SatelliteZ()
 animator = Animator(1,sat)
 
-draw(partitions['explicit'][-3],animator)
+partition = pickle.load(open(global_vars.TREE_FILE,'rb'))
+draw(partition,animator)
