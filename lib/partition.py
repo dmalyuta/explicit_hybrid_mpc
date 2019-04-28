@@ -11,16 +11,14 @@ import sys
 sys.path.append('../')
 
 import os
-import glob
 import time
 import fcntl
 import pickle
 import numpy as np
 
 import global_vars
-from general import warning
-from tree import NodeData, Tree
-from tools import split_along_longest_edge, simplex_volume, simplex_condition_number, get_nodes_in_queue
+from tree import NodeData
+from tools import split_along_longest_edge, simplex_volume, get_nodes_in_queue
 from polytope import Polytope
 
 def ecc(oracle,node,location,animator=None,progressbar=None):
@@ -74,7 +72,10 @@ def ecc(oracle,node,location,animator=None,progressbar=None):
             if len(get_nodes_in_queue())<global_vars.N_PROC:
                 # Save the right child to a separate file, to be partitioned by
                 # another thread
+                mutex = open(global_vars.MUTEX_FILE,'w')
+                fcntl.lockf(mutex,fcntl.LOCK_EX)
                 pickle.dump(node.left,open(global_vars.NODE_DIR+('node_%s.pkl'%(location+'0')),'wb'))
+                fcntl.lockf(mutex,fcntl.LOCK_UN)
             else:
                 ecc(oracle,node.left,location+'0',animator,progressbar)
             ecc(oracle,node.right,location+'1',animator,progressbar)
@@ -287,9 +288,9 @@ def spinner(proc_num,algorithm_call,wait_time=5.):
         active : int
             Process status (1: active, 0: idle).
         """
-        status = open('status.txt','r').readline()
+        status = open(global_vars.STATUS_FILE,'r').readline()
         status = status[:proc_num]+str(active)+status[proc_num+1:]
-        open('status.txt','w').write(status)
+        open(global_vars.STATUS_FILE,'w').write(status)
     
     def append_to_tree(tree,branch,location):
         """
@@ -319,23 +320,14 @@ def spinner(proc_num,algorithm_call,wait_time=5.):
         else:
             cursor.data = branch.data
     
-    mutex = open('mutex','w')
+    mutex = open(global_vars.MUTEX_FILE,'w')
     while True:
         time.sleep(wait_time)
+        fcntl.lockf(mutex,fcntl.LOCK_EX)
         nodes_in_queue = get_nodes_in_queue()
-        #print(nodes_in_queue)
-        #print(os.listdir('./data/'))
-        if len(nodes_in_queue)>0:
-            # Try to get a node from the queue
-            busy = False
-            try:
-                fcntl.lockf(mutex,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            except IOError:
-                # Another process is currently reading the queue. Check back later
-                busy = True
-            if busy:
-                continue
-            #print('Reading %s'%(nodes_in_queue[0]))
+        if len(nodes_in_queue)==0:
+            fcntl.lockf(mutex,fcntl.LOCK_UN)
+        else:
             subtree_file = open(nodes_in_queue[0],'rb')
             subtree = pickle.load(subtree_file)
             subtree_location = nodes_in_queue[0][len(global_vars.NODE_DIR+'node_'):-4]
@@ -345,13 +337,35 @@ def spinner(proc_num,algorithm_call,wait_time=5.):
             # Partition this node
             algorithm_call(subtree,subtree_location)
             # Update the full tree
-            #print('Done... ')
             fcntl.lockf(mutex,fcntl.LOCK_EX)
-            #print('saving... ')
-            maintree = pickle.load(open(global_vars.TREE_FILE,'rb'))
-            append_to_tree(maintree,subtree,subtree_location)
-            pickle.dump(maintree,open(global_vars.TREE_FILE,'wb'))
+            pickle.dump(subtree,open(global_vars.NODE_DIR+('tree_%s.pkl'%(subtree_location)),'wb'))
             set_status(0)
             fcntl.lockf(mutex,fcntl.LOCK_UN)
-            #print('saved')
+# =============================================================================
+#         time.sleep(wait_time)
+#         nodes_in_queue = get_nodes_in_queue()
+#         if len(nodes_in_queue)>0:
+#             # Try to get a node from the queue
+#             busy = False
+#             try:
+#                 fcntl.lockf(mutex,fcntl.LOCK_EX|fcntl.LOCK_NB)
+#             except IOError:
+#                 # Another process is currently reading the queue. Check back later
+#                 busy = True
+#             if busy:
+#                 continue
+#             subtree_file = open(nodes_in_queue[0],'rb')
+#             subtree = pickle.load(subtree_file)
+#             subtree_location = nodes_in_queue[0][len(global_vars.NODE_DIR+'node_'):-4]
+#             os.remove(nodes_in_queue[0])
+#             set_status(1)
+#             fcntl.lockf(mutex,fcntl.LOCK_UN)
+#             # Partition this node
+#             algorithm_call(subtree,subtree_location)
+#             # Update the full tree
+#             fcntl.lockf(mutex,fcntl.LOCK_EX)
+#             pickle.dump(subtree,open(global_vars.NODE_DIR+('tree_%s.pkl'%(subtree_location)),'wb'))
+#             set_status(0)
+#             fcntl.lockf(mutex,fcntl.LOCK_UN)
+# =============================================================================
     mutex.close()

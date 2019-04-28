@@ -26,16 +26,5 @@ err = pickle.load(open(global_vars.ERR_FILE,'rb'))
 oracle = example(abs_err=err['abs_err'],rel_err=err['rel_err'])[1]
 
 # Start the slave loop
-from mpc_library import SatelliteZ
-from tools import Progress, Animator
-number_init_simplices = 2
-vol = 0.0004
-progressbar = Progress(vol,number_init_simplices)
-progressbar.volume_closed = 0.
-progressbar.open_count = progressbar.closed_count
-progressbar.closed_count = 0
-#
-#animator = Animator(1,SatelliteZ())
-
-alg_call = lambda branch,location: ecc(oracle,branch,location,progressbar=progressbar)#,animator=animator)
+alg_call = lambda branch,location: ecc(oracle,branch,location)
 spinner(proc_num,alg_call,wait_time=0.)
