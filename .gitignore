@@ -2,6 +2,7 @@ __pycache__/
 /**/gurobi.log
 sandbox/
 data/
+status
 /**/*.pyc
 /figures/*
 !/**/.gitkeep

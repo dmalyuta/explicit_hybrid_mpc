@@ -15,7 +15,7 @@ class Oracle:
     "Oracle" problems, i.e. the optimization programs that need to be called
     by the partitioning algorithm.
     """
-    solver_options = dict(solver=cvx.GUROBI, verbose=False)
+    solver_options = dict(solver=cvx.GUROBI, verbose=False, Threads=1)
     
     def __init__(self,mpc,eps_a,eps_r,kind='semiexplicit'):
         """
