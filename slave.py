@@ -80,7 +80,10 @@ class StatusPublisher:
         ----------
         active : bool, optional
             ``True`` if the process is in the 'active' state.
-        volume_filled_increment : 
+        volume_filled_increment : float, optional
+            Volume of closed lead.
+        simplex_count_increment : int, optional
+            How many additional simplices added to partition.
         """
         # Update time counters
         time_now = time.time()

@@ -36,7 +36,7 @@ def setup():
         os.remove(file)
 
     # Main tree and initial node to be explored
-    partition,oracle = example(abs_frac=0.4,rel_err=1.5)
+    partition,oracle = example(abs_frac=0.1,rel_err=0.1)
     with open(global_vars.ERR_FILE,'wb') as f:
         pickle.dump(dict(abs_err=oracle.eps_a,rel_err=oracle.eps_r),f)
     with open(global_vars.TREE_FILE,'wb') as f:
@@ -135,58 +135,76 @@ def start_processes(which_alg):
             for i in range(global_vars.N_PROC)]
     return proc
 
-def write_main_status_file(proc_status,overall_status_list,time_start):
-    """
-    Write the main status file.
+class MainStatusWriter:
+    def __init__(self):
+        self.overall_status_list = []
+        self.proc_status_list = []
+        self.time_start = None
+        
+    def update(self,proc_status):
+        """
+        Write the main status file.
+        
+        Parameters
+        ----------
+        proc_status : list
+            List of dicts from individual processes status files.
+        overall_status_list : list
+            List of dicts of overall status.
+        """
+        self.proc_status_list.append(proc_status)
+        with open(global_vars.STATUS_FILE,'w') as status_file:
+            # Overall status
+            with open(global_vars.TOTAL_VOLUME_FILE,'rb') as f:
+                total_volume = pickle.load(f)
+            num_proc_active = sum([proc_status[i]['status']=='active' for i in range(global_vars.N_PROC)])
+            volume_filled_total = sum([proc_status[i]['volume_filled_total'] for i in range(global_vars.N_PROC)])
+            volume_filled_frac = volume_filled_total/total_volume
+            simplex_count_total = sum([proc_status[i]['simplex_count_total'] for i in range(global_vars.N_PROC)])
+            time_active_total = sum([proc_status[i]['time_active_total'] for i in range(global_vars.N_PROC)])
+            if self.time_start is None:
+                self.time_start = time.time()
+            time_elapsed = time.time()-self.time_start
+            overall_status = dict(num_proc_active=num_proc_active,
+                                  volume_filled_total=volume_filled_total,
+                                  volume_filled_frac=volume_filled_frac,
+                                  simplex_count_total=simplex_count_total,
+                                  time_elapsed=time_elapsed,
+                                  time_active_total=time_active_total)
+            self.overall_status_list.append(overall_status)
+            status_file.write('\n'.join([
+                    '# overall',
+                    'number of processes active: %d'%(num_proc_active),
+                    'volume filled (total [%%]): %.4e'%(volume_filled_frac*100.),
+                    'simplex_count: %d'%(simplex_count_total),
+                    'time elapsed [s]: %d'%(time_elapsed),
+                    'time active (total for all processes [s]): %.0f'%(time_active_total)
+                    ])+'\n\n')
+            # Individual processes' status
+            for i in range(global_vars.N_PROC):
+                data = proc_status[i]
+                status_file.write('\n'.join([
+                        '# proc %d'%(i),
+                        'status: %s'%(data['status']),
+                        'current branch: %s'%(data['current_branch']),
+                        'volume filled (total [-]): %.4e'%(data['volume_filled_total']),
+                        'volume filled (current [%%]): %.4e'%(data['volume_filled_current']*100.),
+                        'simplex count (total [-]): %d'%(data['simplex_count_total']),
+                        'simplex count (current [-]): %d'%(data['simplex_count_current']),
+                        'time active (total [s]): %.0f'%(data['time_active_total']),
+                        'time active (current [s]): %.0f'%(data['time_active_current']),
+                        'time idle (total [s]): %.0f'%(data['time_idle'])
+                        ])+'\n\n')
     
-    Parameters
-    ----------
-    proc_status : list
-        List of dicts from individual processes status files.
-    overall_status_list : list
-        List of dicts of overall status.
-    """
-    status_file = open(global_vars.STATUS_FILE,'w')
-    # Overall status
-    with open(global_vars.TOTAL_VOLUME_FILE,'rb') as f:
-        total_volume = pickle.load(f)
-    num_proc_active = sum([proc_status[i]['status']=='active' for i in range(global_vars.N_PROC)])
-    volume_filled_frac = sum([proc_status[i]['volume_filled_total'] for i in range(global_vars.N_PROC)])/total_volume
-    simplex_count_total = sum([proc_status[i]['simplex_count_total'] for i in range(global_vars.N_PROC)])
-    time_active_total = sum([proc_status[i]['time_active_total'] for i in range(global_vars.N_PROC)])
-    time_elapsed = time.time()-time_start
-    overall_status = dict(num_proc_active=num_proc_active,
-                          volume_filled_frac=volume_filled_frac,
-                          simplex_count_total=simplex_count_total,
-                          time_elapsed=time_elapsed,
-                          time_active_total=time_active_total)
-    overall_status_list.append(overall_status)
-    status_file.write('\n'.join([
-            '# overall',
-            'number of processes active: %d'%(num_proc_active),
-            'volume filled (total [%%]): %.4e'%(volume_filled_frac*100.),
-            'simplex_count: %d'%(simplex_count_total),
-            'time elapsed [s]: %d'%(time_elapsed),
-            'time active (total for all processes [s]): %.0f'%(time_active_total)
-            ])+'\n\n')
-    # Individual processes' status
-    for i in range(global_vars.N_PROC):
-        data = proc_status[i]
-        status_file.write('\n'.join([
-                '# proc %d'%(i),
-                'status: %s'%(data['status']),
-                'current branch: %s'%(data['current_branch']),
-                'volume filled (total [-]): %.4e'%(data['volume_filled_total']),
-                'volume filled (current [%%]): %.4e'%(data['volume_filled_current']*100.),
-                'simplex count (total [-]): %d'%(data['simplex_count_total']),
-                'simplex count (current [-]): %d'%(data['simplex_count_current']),
-                'time active (total [s]): %.0f'%(data['time_active_total']),
-                'time active (current [s]): %.0f'%(data['time_active_current']),
-                'time idle (total [s]): %.0f'%(data['time_idle'])
-                ])+'\n\n')
-    status_file.close()
+    def save_statistics(self):
+        """
+        Save the main statistics file.
+        """
+        with open(global_vars.STATISTICS_FILE,'wb') as f:
+            pickle.dump(dict(overall=self.overall_status_list,
+                             individual_process=self.proc_status_list),f)
 
-def await_termination(proc,check_period=5.):
+def await_termination(proc,status_writer,check_period=5.):
     """
     Waits for partitioning process to end.
     
@@ -197,11 +215,8 @@ def await_termination(proc,check_period=5.):
     check_period : float, optional
         How frequently (in seconds) to check termination criterion.
     """
-    overall_status_list = []
-    proc_status_list = []
     mutex = Mutex(-1)
     finished = False
-    time_start = time.time()
     while not finished:
         time.sleep(check_period)
         # Read all process status files
@@ -217,9 +232,8 @@ def await_termination(proc,check_period=5.):
             # Too early - processes did not yet all create their status files
             mutex.unlock()
             continue
-        proc_status_list.append(proc_status)
         # Update master status file (summary of all processes statuses)
-        write_main_status_file(proc_status,overall_status_list,time_start)
+        status_writer.update(proc_status)
         # Check terminator criterion
         all_idle = all([proc_status[i]['status']=='idle' for i in range(global_vars.N_PROC)])
         if all_idle and len(nodes_in_queue)==0:
@@ -228,15 +242,14 @@ def await_termination(proc,check_period=5.):
             for i in range(global_vars.N_PROC):
                 proc[i].kill()
                 finished = True
-    # Save the status lists
-    with open(global_vars.STATISTICS_FILE,'wb') as f:
-        pickle.dump(dict(overall=overall_status_list,individual_process=proc_status_list),f)
 
 if __name__=='__main__':
     setup()
+    status_writer = MainStatusWriter()
     for alg in ['ecc','lcss']:
         proc = start_processes(alg)
-        await_termination(proc,check_period=0.1)
+        await_termination(proc,status_writer,check_period=0.1)
         tree = save_tree()
         if alg=='ecc':
             save_leaves_into_queue(tree)
+    status_writer.save_statistics()

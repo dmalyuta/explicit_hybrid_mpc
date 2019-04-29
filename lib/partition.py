@@ -171,7 +171,6 @@ def lcss(oracle,node,location,status_writer,mutex):
     eps_suboptimal = bar_e_a_R<=oracle.eps_a or bar_e_r_R<=oracle.eps_r
     if infeasible or eps_suboptimal:
         # Close leaf
-        sys.stdout.flush()
         node.data.timestamp = time.time()
         volume_closed = simplex_volume(node.data.vertices)
         mutex.lock('saving leaf')
