@@ -36,7 +36,7 @@ def setup():
         os.remove(file)
 
     # Main tree and initial node to be explored
-    partition,oracle = example(abs_frac=0.1,rel_err=0.1)
+    partition,oracle = example(abs_frac=0.5,rel_err=2.0)
     with open(global_vars.ERR_FILE,'wb') as f:
         pickle.dump(dict(abs_err=oracle.eps_a,rel_err=oracle.eps_r),f)
     with open(global_vars.TREE_FILE,'wb') as f:
@@ -248,7 +248,7 @@ if __name__=='__main__':
     status_writer = MainStatusWriter()
     for alg in ['ecc','lcss']:
         proc = start_processes(alg)
-        await_termination(proc,status_writer,check_period=0.1)
+        await_termination(proc,status_writer,check_period=5.)
         tree = save_tree()
         if alg=='ecc':
             save_leaves_into_queue(tree)

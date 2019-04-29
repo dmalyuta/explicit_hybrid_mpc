@@ -374,7 +374,7 @@ class SatelliteXY(MPC):
     def __init__(self):
         super().__init__()
         # Parameters
-        self.N = 3 # Prediction horizon length
+        self.N = 4 # Prediction horizon length
         # Raw values
         pars = {'mu': 3.986004418e14,  # [m^3*s^-2] Standard gravitational parameter
                 'R_E': 6378137.,       # [m] Earth mean radius
