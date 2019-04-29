@@ -8,8 +8,15 @@ Copyright 2019 University of Washington. All rights reserved.
 """
 
 import os
+import cvxpy as cvx
 
 N_PROC = 10 # How many parallel processes to run
+
+SOLVER_OPTIONS = dict(solver=cvx.MOSEK, verbose=False) # Optimization solver options
+#SOLVER_OPTIONS = dict(solver=cvx.GUROBI, verbose=False, Threads=1)
+#SOLVER_OPTIONS = dict(solver=cvx.ECOS_BB, verbose=False)
+
+EXAMPLE = 'cwh_xy' # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),os.pardir))
 STATUS_FILE = PROJECT_DIR+'/status' # Overall program status (text file)

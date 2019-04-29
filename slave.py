@@ -148,7 +148,7 @@ def start_process(proc_num,which_alg):
         alg_call = lambda branch,location: ecc(oracle,branch,location,status_writer,mutex)
     else:
         alg_call = lambda branch,location: lcss(oracle,branch,location,status_writer,mutex)
-    spinner(proc_num,alg_call,status_writer,mutex,wait_time=5.)
+    spinner(proc_num,alg_call,status_writer,mutex,wait_time=0.1)
 
 if __name__=='__main__':
     proc_num,which_alg = parse_args()

@@ -12,6 +12,7 @@ sys.path.append('./lib/')
 
 import numpy as np
 
+import global_vars
 from mpc_library import SatelliteZ,SatelliteXY
 from oracle import Oracle
 from polytope import Polytope
@@ -99,5 +100,9 @@ def example(*args,**kwargs):
     and returns values documented in the respective function above that is
     called.
     """
-#    return satellite_z_example(*args,**kwargs)
-    return satellite_xy_example(*args,**kwargs)
+    if global_vars.EXAMPLE=='cwh_z':
+        return satellite_z_example(*args,**kwargs)
+    elif global_vars.EXAMPLE=='cwh_xy':
+        return satellite_xy_example(*args,**kwargs)
+    else:
+        raise ValueError('Unknown example (%s)'%(global_vars.EXAMPLE))

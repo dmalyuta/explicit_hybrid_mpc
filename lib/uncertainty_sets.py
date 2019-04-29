@@ -15,6 +15,7 @@ import scipy.linalg as sla
 import cvxpy as cvx
 
 import general
+import global_vars
 from polytope import Polytope
 import set_synthesis as ss
 
@@ -409,7 +410,7 @@ class Ellipsoid(Set):
         constraints  = [cvx.inv_pos(4*y[i])*S[i,i]+y[i]*t<=u[i] for i in range(m)]
         constraints += [y >= 0]
         problem = cvx.Problem(cost, constraints)
-        problem.solve(solver=cvx.ECOS)
+        problem.solve(**global_vars.SOLVER_OPTIONS)
         u = np.array(u.value.T).flatten()
         # Find lower bound
         l = cvx.Variable(m)
@@ -417,7 +418,7 @@ class Ellipsoid(Set):
         constraints  = [-cvx.inv_pos(4*y[i])*S[i,i]-y[i]*t>=l[i] for i in range(m)]
         constraints += [y >= 0]
         problem = cvx.Problem(cost, constraints)
-        problem.solve(solver=cvx.ECOS)
+        problem.solve(**global_vars.SOLVER_OPTIONS)
         l = np.array(l.value.T).flatten()
         # Make the hyperrectangle
         H = Hyperrectangle(l,u)

@@ -13,6 +13,7 @@ from numpy.linalg import matrix_power as mpow
 import scipy.linalg as sla
 import cvxpy as cvx
 
+import global_vars
 from polytope import Polytope,subtractHyperrectangles
 import uncertainty_sets as uc
 from set_synthesis import minRPI
@@ -113,7 +114,7 @@ class MPC:
             cost = cvx.Maximize(G[j].dot(mpow(self.plant.A,k-1-i)).dot(D).dot(W).dot(D_w)*w)
             constraints = [R.dot(D_w)*w <= r]
             problem = cvx.Problem(cost,constraints)
-            return problem.solve(solver=cvx.GUROBI, verbose=False)
+            return problem.solve(**global_vars.SOLVER_OPTIONS)
         sum_sigma = []
         for k in fullrange(self.N):
             sum_sigma_facet = []

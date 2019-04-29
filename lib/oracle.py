@@ -10,15 +10,13 @@ Copyright 2019 University of Washington. All rights reserved.
 import numpy as np
 import cvxpy as cvx
 
+import global_vars
+
 class Oracle:
     """
     "Oracle" problems, i.e. the optimization programs that need to be called
     by the partitioning algorithm.
     """
-#    solver_options = dict(solver=cvx.GUROBI, verbose=False, Threads=1)
-    solver_options = dict(solver=cvx.MOSEK, verbose=False)
-#    solver_options = dict(solver=cvx.ECOS_BB, verbose=False)
-    
     def __init__(self,mpc,eps_a,eps_r,kind='semiexplicit'):
         """
         Pre-parses the oracle problems.
@@ -50,6 +48,7 @@ class Oracle:
         self.delta_fixed = cvx.Parameter(self.mpc.Nu*self.mpc.N)
         constraints = self.mpc.make_constraints(self.mpc.x0,self.mpc.x,self.mpc.u,self.delta_fixed)
         self.nlp = cvx.Problem(self.mpc.cost,constraints)
+        self.error_counter = 0
         
         # Make V^R, the find-feasible-commutation-in-simplex MINLP
         x_theta = [[self.mpc.D_x*cvx.Variable(self.mpc.n_x) for k in range(self.mpc.N+1)] for _ in range(self.mpc.n_x+1)]
@@ -130,10 +129,10 @@ class Oracle:
         """
         self.mpc.x0.value = theta
         if check_feasibility:
-            self.minlp_feasibility.solve(solver=cvx.GUROBI, verbose=False)#**self.solver_options)
+            self.minlp_feasibility.solve(**global_vars.SOLVER_OPTIONS)
             return (self.minlp_feasibility.status == cvx.OPTIMAL)
         else:
-            self.minlp.solve(**self.solver_options)
+            self.minlp.solve(**global_vars.SOLVER_OPTIONS)
             u_opt = self.mpc.u[0].value
             delta_opt = self.mpc.delta.value
             J_opt = self.minlp.value
@@ -162,7 +161,15 @@ class Oracle:
         """
         self.mpc.x0.value = theta
         self.delta_fixed.value = delta
-        self.nlp.solve(**self.solver_options)
+        try:
+            self.nlp.solve(**global_vars.SOLVER_OPTIONS)
+        except:
+            # Save this scenario
+            import pickle
+            with open(global_vars.PROJECT_DIR+'/data/error_case_%d.pkl'%(self.error_counter),'wb') as f:
+                pickle.dump(dict(theta=theta,delta=delta),f)
+            self.error_counter += 1
+            raise
         J_opt = self.nlp.value
         u_opt = self.mpc.u[0].value
         t_solve = self.nlp.solver_stats.solve_time
@@ -184,7 +191,7 @@ class Oracle:
         """
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
-        self.feasibility_in_simplex.solve(**self.solver_options)
+        self.feasibility_in_simplex.solve(**global_vars.SOLVER_OPTIONS)
         delta_feas = self.mpc.delta.value
         return delta_feas
     
@@ -213,12 +220,12 @@ class Oracle:
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
         self.vertex_costs.value = V_delta_R
-        self.abs_err_overapprox.solve(**self.solver_options)
+        self.abs_err_overapprox.solve(**global_vars.SOLVER_OPTIONS)
         bar_e_a_R = -self.abs_err_overapprox.value
         if np.isinf(bar_e_a_R):
             bar_e_r_R = np.inf
         else:
-            self.rel_err_denom.solve(**self.solver_options)
+            self.rel_err_denom.solve(**global_vars.SOLVER_OPTIONS)
             bar_e_r_R = bar_e_a_R/self.rel_err_denom.value if self.rel_err_denom.value>0 else np.inf
         return bar_e_a_R, bar_e_r_R
 
@@ -246,8 +253,8 @@ class Oracle:
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
         max_lhs = np.max(V_delta_R)
-        min_lhs = self.min_over_simplex_for_this_delta.solve(**self.solver_options)
-        rhs = max(self.eps_a,self.eps_r*self.min_over_simplex_for_any_delta.solve(**self.solver_options))
+        min_lhs = self.min_over_simplex_for_this_delta.solve(**global_vars.SOLVER_OPTIONS)
+        rhs = max(self.eps_a,self.eps_r*self.min_over_simplex_for_any_delta.solve(**global_vars.SOLVER_OPTIONS))
         #print(max_lhs,min_lhs,max_lhs-min_lhs,rhs)
         return max_lhs-min_lhs<rhs
     
@@ -274,7 +281,7 @@ class Oracle:
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
         self.vertex_costs.value = V_delta_R
-        self.min_V_except_delta.value = self.min_over_simplex_for_any_delta_except_ref.solve(**self.solver_options)
-        self.find_more_optimal_commutation.solve(**self.solver_options)
+        self.min_V_except_delta.value = self.min_over_simplex_for_any_delta_except_ref.solve(**global_vars.SOLVER_OPTIONS)
+        self.find_more_optimal_commutation.solve(**global_vars.SOLVER_OPTIONS)
         better_delta = self.mpc.delta.value
         return better_delta

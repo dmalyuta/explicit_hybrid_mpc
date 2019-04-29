@@ -16,6 +16,7 @@ import cdd
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
+import global_vars
 import general
 
 def subtractHyperrectangles(X_inner,X_outer):
@@ -262,7 +263,7 @@ class Polytope(object):
             cost = cvx.Minimize(R)
             constraints = [cvx.norm(v-x)<=R for v in self.V]
         problem = cvx.Problem(cost,constraints)
-        R = problem.solve(solver=cvx.GUROBI, verbose=False)
+        R = problem.solve(**global_vars.SOLVER_OPTIONS)
         if not (problem.status==cvx.OPTIMAL or
                 problem.status==cvx.OPTIMAL_INACCURATE):
             # Optimization failed due to ugly polytope
@@ -313,10 +314,10 @@ class Polytope(object):
                 cost = cvx.Maximize(theta)
                 constraints = [self.A*(points[-1]+theta*direction) <= self.b]
                 pbm = cvx.Problem(cost, constraints)
-                theta_max = pbm.solve(solver=cvx.GUROBI)
+                theta_max = pbm.solve(**global_vars.SOLVER_OPTIONS)
                 cost = cvx.Minimize(theta)
                 pbm = cvx.Problem(cost, constraints)
-                theta_min = pbm.solve(solver=cvx.GUROBI)
+                theta_min = pbm.solve(**global_vars.SOLVER_OPTIONS)
                 # Sample a random theta in [theta_min, theta_max]
                 theta = np.random.uniform(low=theta_min, high=theta_max)
                 # Add the new point
@@ -354,7 +355,7 @@ class Polytope(object):
                        Y*self.A == np.eye(self.n),
                        Y >= 0]
         problem = cvx.Problem(cost, constraints)
-        optimal_value = problem.solve(solver=cvx.ECOS)
+        optimal_value = problem.solve(**global_vars.SOLVER_OPTIONS)
         if optimal_value == np.inf:
             raise general.ControlError("Infeasible problem for bounding box")
         u = np.array(u.value.T).flatten()
@@ -365,7 +366,7 @@ class Polytope(object):
                        Y*self.A == -np.eye(self.n),
                        Y >= 0]
         problem = cvx.Problem(cost, constraints)
-        optimal_value = problem.solve(solver=cvx.ECOS)
+        optimal_value = problem.solve(**global_vars.SOLVER_OPTIONS)
         if optimal_value == np.inf:
             raise general.ControlError("Infeasible problem for bounding box")
         l = np.array(l.value.T).flatten()

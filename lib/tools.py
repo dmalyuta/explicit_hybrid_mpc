@@ -385,7 +385,7 @@ def getM(H,h):
         for v in Polytope(A=H[i],b=h[i]).V:
                 constraints += [H[j].dot(v) <= h[j]+M for j in range(Nu) if j!=i]
     problem = cvx.Problem(cost,constraints)
-    problem.solve(solver=cvx.GUROBI, verbose=False)
+    problem.solve(**global_vars.SOLVER_OPTIONS)
     return M.value
 
 class Mutex:

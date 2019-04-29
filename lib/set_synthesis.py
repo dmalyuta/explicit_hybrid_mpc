@@ -13,6 +13,7 @@ import scipy.linalg as sla
 import cvxpy as cvx
 
 import general
+import global_vars
 from polytope import Polytope
 
 def sampleUniformEllipsoid(P=None,L=None,t=1.):
@@ -120,7 +121,7 @@ def minRPI(A,D,R,r,G=None):
                         d[i] <= G[i].dot(D)*omega[:,i],
                         R*omega[:,i] <= r]
     problem = cvx.Problem(cost, constraints)
-    optimal_value = problem.solve(solver=cvx.GUROBI, verbose=False)
+    optimal_value = problem.solve(**global_vars.SOLVER_OPTIONS)
     if optimal_value == np.inf:
         raiseError("One-shot LP unbounded")
     g = c.value+d.value
