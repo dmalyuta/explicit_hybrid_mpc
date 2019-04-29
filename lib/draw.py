@@ -14,7 +14,7 @@ from mpc_library import SatelliteZ
 from tools import Animator
 from polytope import Polytope
 
-def draw(root,animator):
+def draw(root,animator,location=''):
     """
     Grow an initial binary tree given by root using algorithm() (either
     ``ecc()`` or ``lcss()``).
@@ -37,11 +37,12 @@ def draw(root,animator):
     anim_closed_leaf = lambda delta: dict(facecolor=animator.get_color((delta>0.5).astype(int)))
     
     if root.is_leaf():
+        print(location)
         animator.update(Polytope(V=root.data.vertices,A=False),**anim_closed_leaf(root.data.commutation))
     else:
         #animator.update(Polytope(V=root.data.vertices,A=False),**anim_open_leaf)
-        draw(root.left,animator)
-        draw(root.right,animator)
+        draw(root.left,animator,location+'0')
+        draw(root.right,animator,location+'1')
         
 sat = SatelliteZ()
 animator = Animator(1,sat)

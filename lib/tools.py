@@ -7,10 +7,12 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import sys
 import glob
 import itertools
 import primefac
 import math
+import fcntl
 import numpy as np
 import numpy.linalg as la
 import scipy.spatial as scs
@@ -385,12 +387,31 @@ def getM(H,h):
     problem = cvx.Problem(cost,constraints)
     problem.solve(solver=cvx.GUROBI, verbose=False)
     return M.value
+
+class Mutex:
+    def __init__(self,proc_num,verbose=False):
+        """
+        Parameters
+        ----------
+        proc_num : int
+            Process number that mutex belongs to.
+        verbose : bool, optional
+            ``True`` to print debug output.
+        """
+        self.proc_num = proc_num
+        self.verbose = verbose
+        self.mutex = open(global_vars.MUTEX_FILE,'w')
+        
+    def __print(self,string):
+        if self.verbose:
+            print('proc %d: '%(self.proc_num)+string)
+            sys.stdout.flush()
     
-#import numpy as np
-#lb, ub = 0.05, 1.
-#m = 1.
-#P = [np.array([[1.],[-1.]]),np.array([[-1.],[1.]]),np.array([[1.],[-1.]])]
-#p = [np.array([ub*m,-lb*m]),np.array([ub*m,-lb*m]),np.zeros((2))]
-#
-#M = getM(P,p)
-#print(M)
+    def lock(self,msg=''):
+        self.__print('trying to acquire mutex%s'%(' (%s)'%(msg) if msg!='' else ''))
+        fcntl.lockf(self.mutex,fcntl.LOCK_EX)
+        self.__print('acquired mutex')
+    
+    def unlock(self,msg=''):
+        fcntl.lockf(self.mutex,fcntl.LOCK_UN)
+        self.__print('released mutex%s'%(' (%s)'%(msg) if msg!='' else ''))

@@ -69,21 +69,10 @@ class Oracle:
         extra_constraints = []
         in_simplex = [sum(alpha)==1]
         extra_constraints += in_simplex
-        if kind=='explicit':
-            constraints += extra_constraints
-        # commutation is not equal to the reference commutation, only used
-        # for semi-explicit implementation and D_delta^R below
-        delta_offset = cvx.Variable(self.mpc.Nu*self.mpc.N, boolean=True)
-        extra_constraints += [self.mpc.delta[self.mpc.Nu*k+i] == self.delta_fixed[self.mpc.Nu*k+i]+
-                              (1-2*self.delta_fixed[self.mpc.Nu*k+i])*delta_offset[self.mpc.Nu*k+i]
-                              for k in range(self.mpc.N) for i in range(self.mpc.Nu)]
-        extra_constraints += [sum([delta_offset[self.mpc.Nu*k+i] for k in range(self.mpc.N)
-                                   for i in range(self.mpc.Nu)]) >= 1]
-        if kind=='semiexplicit':
-            constraints += extra_constraints
+        constraints += extra_constraints
         # cost using affine over-approximator for reference commutation
         bar_V = sum([alpha[i]*self.vertex_costs[i] for i in range(self.mpc.n_x+1)])
-        cost_abs_err = cvx.Maximize(bar_V-self.mpc.V)
+        cost_abs_err = cvx.Minimize(self.mpc.V-bar_V)
         self.abs_err_overapprox = cvx.Problem(cost_abs_err,constraints)
         
         # Make denominator of bar_E_r^R, which is P_theta restricted to
@@ -219,12 +208,11 @@ class Oracle:
         bar_e_r_R : float
             Over-approximated relative error.
         """
-        self.delta_fixed.value = delta_ref
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
         self.vertex_costs.value = V_delta_R
         self.abs_err_overapprox.solve(**self.solver_options)
-        bar_e_a_R = self.abs_err_overapprox.value
+        bar_e_a_R = -self.abs_err_overapprox.value
         if np.isinf(bar_e_a_R):
             bar_e_r_R = np.inf
         else:

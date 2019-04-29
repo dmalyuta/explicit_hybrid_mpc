@@ -3,6 +3,8 @@ __pycache__/
 sandbox/
 data/
 status
+status_proc_*
+mutex
 /**/*.pyc
 /figures/*
 !/**/.gitkeep
