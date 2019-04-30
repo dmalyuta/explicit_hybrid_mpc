@@ -171,7 +171,7 @@ def lcss(oracle,node,location,status_writer,mutex):
     eps_suboptimal = bar_e_a_R<=oracle.eps_a or bar_e_r_R<=oracle.eps_r
     if infeasible or eps_suboptimal:
         # Close leaf
-        node.data.is_epsilon_optimal = True
+        node.data.is_epsilon_suboptimal = True
         node.data.timestamp = time.time()
         volume_closed = simplex_volume(node.data.vertices)
         mutex.lock('saving leaf')
@@ -183,8 +183,21 @@ def lcss(oracle,node,location,status_writer,mutex):
                                       delta_ref=node.data.commutation)
         D_delta_R_feasible = delta_star is not None
         if D_delta_R_feasible:
-            new_vertex_inputs_and_costs = [oracle.P_theta_delta(theta=vertex,delta=delta_star)
-                                           for vertex in node.data.vertices]
+#            new_vertex_inputs_and_costs = [oracle.P_theta_delta(theta=vertex,delta=delta_star)
+#                                           for vertex in node.data.vertices]
+            try:
+                new_vertex_inputs_and_costs = []
+                for vertex in node.data.vertices:
+                    new_vertex_inputs_and_costs.append(oracle.P_theta_delta(theta=vertex,delta=delta_star))
+            except:
+                # Save this scenario
+                with open(global_vars.PROJECT_DIR+'/data/error_case_%s.pkl'%(time.strftime("%d%m%YT%H%M%S")),'wb') as f:
+                    pickle.dump(dict(theta=vertex,
+                                     delta=delta_star,
+                                     R=node.data.vertices,
+                                     V_delta_R=node.data.vertex_costs,
+                                     delta_ref=node.data.commutation),f)
+                raise
             Nvx = node.data.vertices.shape[0]
             new_vertex_costs = np.array([new_vertex_inputs_and_costs[i][1] for i
                                          in range(Nvx)])

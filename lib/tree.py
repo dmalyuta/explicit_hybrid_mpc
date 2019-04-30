@@ -29,7 +29,7 @@ class NodeData:
         """
         self.timestamp = time.time()
         self.vertices = vertices
-        self.is_epsilon_optimal = False
+        self.is_epsilon_suboptimal = False
         if commutation is not None:
             self.commutation = commutation
         if vertex_costs is not None:

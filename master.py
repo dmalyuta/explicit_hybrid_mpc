@@ -90,9 +90,9 @@ def build_tree(cursor,location=''):
             with open(subtree_filename,'rb') as subtree_file:
                 subtree = pickle.load(subtree_file)
             os.remove(subtree_filename) # cleanup
-            if subtree.is_leaf():
-                cursor.data = subtree.data
-            else:
+            cursor.data = subtree.data
+            cursor.top = subtree.top
+            if not subtree.is_leaf():
                 cursor.left = subtree.left
                 cursor.right = subtree.right
         except FileNotFoundError:
