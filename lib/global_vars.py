@@ -19,7 +19,7 @@ SOLVER_OPTIONS = dict(solver=cvx.MOSEK, verbose=False) # Optimization solver opt
 EXAMPLE = 'cwh_xy' # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),os.pardir))
-STATUS_FILE = PROJECT_DIR+'/status' # Overall program status (text file)
+STATUS_FILE = PROJECT_DIR+'/status.txt' # Overall program status (text file)
 STATISTICS_FILE = PROJECT_DIR+'/data/statistics.pkl' # Overall statistics
 ERR_FILE = PROJECT_DIR+'/data/err.pkl' # Absolute and relative error settings for optimization oracle
 TREE_FILE = PROJECT_DIR+'/data/tree.pkl' # Overall tree

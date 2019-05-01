@@ -32,7 +32,7 @@ def setup():
     status_file.write('(nothing written yet)')
     status_file.close()
     # remove individual process status files
-    for file in glob.glob(global_vars.PROJECT_DIR+'/status_proc_*'):
+    for file in glob.glob(global_vars.PROJECT_DIR+'/data/status_proc_*.pkl'):
         os.remove(file)
 
     # Main tree and initial node to be explored
@@ -158,6 +158,7 @@ class MainStatusWriter:
             with open(global_vars.TOTAL_VOLUME_FILE,'rb') as f:
                 total_volume = pickle.load(f)
             num_proc_active = sum([proc_status[i]['status']=='active' for i in range(global_vars.N_PROC)])
+            num_proc_failed = sum([proc_status[i]['status']=='failed' for i in range(global_vars.N_PROC)])
             volume_filled_total = sum([proc_status[i]['volume_filled_total'] for i in range(global_vars.N_PROC)])
             volume_filled_frac = volume_filled_total/total_volume
             simplex_count_total = sum([proc_status[i]['simplex_count_total'] for i in range(global_vars.N_PROC)])
@@ -166,6 +167,7 @@ class MainStatusWriter:
                 self.time_start = time.time()
             time_elapsed = time.time()-self.time_start
             overall_status = dict(num_proc_active=num_proc_active,
+                                  num_proc_failed=num_proc_failed,
                                   volume_filled_total=volume_filled_total,
                                   volume_filled_frac=volume_filled_frac,
                                   simplex_count_total=simplex_count_total,
@@ -175,6 +177,7 @@ class MainStatusWriter:
             status_file.write('\n'.join([
                     '# overall',
                     'number of processes active: %d'%(num_proc_active),
+                    'number of processes failed: %d'%(num_proc_failed),
                     'volume filled (total [%%]): %.4e'%(volume_filled_frac*100.),
                     'simplex_count: %d'%(simplex_count_total),
                     'time elapsed [s]: %d'%(time_elapsed),
@@ -225,7 +228,7 @@ def await_termination(proc,status_writer,check_period=5.):
             nodes_in_queue = get_nodes_in_queue()
             proc_status = [None for i in range(global_vars.N_PROC)]
             for i in range(global_vars.N_PROC):
-                with open(global_vars.PROJECT_DIR+'/status_proc_%d'%(i),'rb') as f:
+                with open(global_vars.PROJECT_DIR+'/data/status_proc_%d.pkl'%(i),'rb') as f:
                     proc_status[i] = pickle.load(f)
             mutex.unlock()
         except (FileNotFoundError,EOFError):

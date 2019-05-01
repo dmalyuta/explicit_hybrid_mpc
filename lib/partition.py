@@ -17,8 +17,7 @@ import numpy as np
 
 import global_vars
 from tree import NodeData
-from tools import split_along_longest_edge,simplex_volume,get_nodes_in_queue,Mutex
-from polytope import Polytope
+from tools import split_along_longest_edge,simplex_volume,get_nodes_in_queue
 
 def ecc(oracle,node,location,status_writer,mutex):
     """
@@ -178,26 +177,11 @@ def lcss(oracle,node,location,status_writer,mutex):
         status_writer.update(volume_filled_increment=volume_closed)
         mutex.unlock()
     else:
-        delta_star = oracle.D_delta_R(R=node.data.vertices,
-                                      V_delta_R=node.data.vertex_costs,
-                                      delta_ref=node.data.commutation)
+        delta_star,new_vertex_inputs_and_costs = oracle.D_delta_R(R=node.data.vertices,
+                                                                  V_delta_R=node.data.vertex_costs,
+                                                                  delta_ref=node.data.commutation)
         D_delta_R_feasible = delta_star is not None
         if D_delta_R_feasible:
-#            new_vertex_inputs_and_costs = [oracle.P_theta_delta(theta=vertex,delta=delta_star)
-#                                           for vertex in node.data.vertices]
-            try:
-                new_vertex_inputs_and_costs = []
-                for vertex in node.data.vertices:
-                    new_vertex_inputs_and_costs.append(oracle.P_theta_delta(theta=vertex,delta=delta_star))
-            except:
-                # Save this scenario
-                with open(global_vars.PROJECT_DIR+'/data/error_case_%s.pkl'%(time.strftime("%d%m%YT%H%M%S")),'wb') as f:
-                    pickle.dump(dict(theta=vertex,
-                                     delta=delta_star,
-                                     R=node.data.vertices,
-                                     V_delta_R=node.data.vertex_costs,
-                                     delta_ref=node.data.commutation),f)
-                raise
             Nvx = node.data.vertices.shape[0]
             new_vertex_costs = np.array([new_vertex_inputs_and_costs[i][1] for i
                                          in range(Nvx)])
@@ -273,7 +257,13 @@ def spinner(proc_num,algorithm_call,status_writer,mutex,wait_time=5.):
             os.remove(nodes_in_queue[0])
             mutex.unlock('working on branch %s'%(subtree_location))
             # Partition this node
-            algorithm_call(subtree,subtree_location)
+            try:
+                algorithm_call(subtree,subtree_location)
+            except:
+                mutex.lock('algorithm failed :(')
+                status_writer.update(failed=True)
+                mutex.unlock()
+                raise
             # Update the full tree
             mutex.lock('saving branch')
             with open(global_vars.NODE_DIR+('tree_%s.pkl'%(subtree_location)),'wb') as f:

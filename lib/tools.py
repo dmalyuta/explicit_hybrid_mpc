@@ -15,6 +15,7 @@ import math
 import fcntl
 import numpy as np
 import numpy.linalg as la
+import scipy.linalg as sla
 import scipy.spatial as scs
 import cvxpy as cvx
 import progressbar
@@ -387,6 +388,15 @@ def getM(H,h):
     problem = cvx.Problem(cost,constraints)
     problem.solve(**global_vars.SOLVER_OPTIONS)
     return M.value
+
+def discretize(Ac,Bc,dt):
+    """Dynamics discretization"""
+    M = sla.expm(np.block([[Ac,Bc],
+                           [np.zeros([Bc.shape[1],
+                                      Ac.shape[1]+Bc.shape[1]])]])*dt)
+    A = M[:Ac.shape[0],:Ac.shape[0]]
+    B = M[:Ac.shape[0],Ac.shape[0]:]
+    return A,B
 
 class Mutex:
     def __init__(self,proc_num,verbose=False):

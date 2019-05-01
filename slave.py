@@ -26,7 +26,7 @@ class StatusPublisher:
         proc_num : init
             Process number.
         """
-        self.status_filename = global_vars.PROJECT_DIR+'/status_proc_%d'%(proc_num)
+        self.status_filename = global_vars.PROJECT_DIR+'/data/status_proc_%d.pkl'%(proc_num)
         try:
             with open(self.status_filename,'rb') as f:
                 self.data = pickle.load(f)
@@ -72,7 +72,7 @@ class StatusPublisher:
         self.data['time_active_current'] = 0.
         self.__write()
     
-    def update(self,active=None,volume_filled_increment=None,simplex_count_increment=None):
+    def update(self,active=None,failed=False,volume_filled_increment=None,simplex_count_increment=None):
         """
         Update the data.
         
@@ -97,6 +97,8 @@ class StatusPublisher:
         # Update status
         if active is not None:
             self.data['status'] = 'active' if active else 'idle'
+        if failed is True:
+            self.data['status'] = 'failed'
         # Update volume counters
         if volume_filled_increment is not None:
             self.data['volume_filled_total'] += volume_filled_increment
