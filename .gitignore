@@ -1,9 +1,8 @@
 __pycache__/
 /**/gurobi.log
 sandbox/
-data/
-status
-status_proc_*
+data/*
+status.txt
 mutex
 /**/*.pyc
 /figures/*

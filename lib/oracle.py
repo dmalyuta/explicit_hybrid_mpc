@@ -293,7 +293,14 @@ class Oracle:
                 return better_delta,new_vertex_inputs_and_costs # D_delta^R infeasible
             # Check if P_theta_delta is feasible at each vertex
             try:
-                new_vertex_inputs_and_costs = [self.P_theta_delta(vertex,better_delta) for vertex in R]
+                Nvx = len(R)
+                new_vertex_inputs_and_costs = [None for _ in range(Nvx)]
+                for i in range(Nvx):
+                    vertex = R[i]
+                    new_vertex_inputs_and_costs[i] = self.P_theta_delta(vertex,better_delta)
+                    status = self.nlp.status
+                    if status!=cvx.OPTIMAL and status!=cvx.OPTIMAL_INACCURATE:
+                        raise cvx.SolverError('problem infeasible')
                 return better_delta,new_vertex_inputs_and_costs
             except:
                 # Not feasible at some vertex -> solver must have returned an infeasible solution

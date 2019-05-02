@@ -36,7 +36,7 @@ def setup():
         os.remove(file)
 
     # Main tree and initial node to be explored
-    partition,oracle = example(abs_frac=0.5,rel_err=2.0)
+    partition,oracle = example(abs_frac=0.25,rel_err=1.0)
     with open(global_vars.ERR_FILE,'wb') as f:
         pickle.dump(dict(abs_err=oracle.eps_a,rel_err=oracle.eps_r),f)
     with open(global_vars.TREE_FILE,'wb') as f:
