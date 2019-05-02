@@ -106,9 +106,6 @@ class MPC:
             the worst case independent disturbance at time step i when looking
             at its propagated effect at time step k, along the j-th facet of
             the invariant set.
-
-            NB: using GUROBI because it seems to be a lot more reliable at finding
-            the solution (ECOS fails probably due to numerical errors?).
             
             Parameters
             ----------
