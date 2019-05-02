@@ -51,8 +51,8 @@ class Oracle:
         self.nlp_feasibility = cvx.Problem(cvx.Minimize(0),constraints) # just to check feasibility
         
         # Make V^R, the find-feasible-commutation-in-simplex MINLP
-        x_theta = [[self.mpc.D_x*cvx.Variable(self.mpc.n_x) for k in range(self.mpc.N+1)] for _ in range(self.mpc.n_x+1)]
-        u_theta = [[self.mpc.D_u*cvx.Variable(self.mpc.n_u) for k in range(self.mpc.N)] for _ in range(self.mpc.n_x+1)]
+        x_theta = [self.mpc.make_ux()['x'] for _ in range(self.mpc.n_x+1)]
+        u_theta = [self.mpc.make_ux()['u'] for _ in range(self.mpc.n_x+1)]
         self.vertices = [cvx.Parameter(self.mpc.n_x) for _ in range(self.mpc.n_x+1)]
         feasibility_constraints = []
         for i in range(self.mpc.n_x+1):
@@ -122,7 +122,7 @@ class Oracle:
             return (self.minlp_feasibility.status == cvx.OPTIMAL)
         else:
             self.minlp.solve(**global_vars.SOLVER_OPTIONS)
-            u_opt = self.mpc.u[0].value
+            u_opt = self.mpc.get_u0_value()
             delta_opt = self.mpc.delta.value
             J_opt = self.minlp.value
             t_solve = self.minlp.solver_stats.solve_time
@@ -158,7 +158,7 @@ class Oracle:
         else:
             self.nlp.solve(**global_vars.SOLVER_OPTIONS)
             J_opt = self.nlp.value
-            u_opt = self.mpc.u[0].value
+            u_opt = self.mpc.get_u0_value()
             t_solve = self.nlp.solver_stats.solve_time
             return u_opt, J_opt, t_solve
     

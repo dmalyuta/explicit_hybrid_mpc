@@ -67,22 +67,36 @@ class MPC:
             Coefficient to multiply identity state weight by in the cost.
         """
         # Setup optimization problem matrices and other values
-        self.D_u = self.specs.U_ext.computeScalingMatrix()
-        D_w = Polytope(self.specs.P.R,self.specs.P.r).computeScalingMatrix()
-        self.D_x = self.specs.X.computeScalingMatrix()
         W = self.specs.P.W
         R = self.specs.P.R
         r = self.specs.P.r
         U_partitions = subtractHyperrectangles(self.specs.U_int,self.specs.U_ext)
-        H = [np.row_stack([np.eye(self.n_u),-np.eye(self.n_u)])]+[Up.A for Up in U_partitions]
-        h = [np.zeros(2*self.n_u)]+[Up.b for Up in U_partitions]
-        self.Nu = len(H) # Number of convex sets whose union makes the control set
+        H = [Up.A for Up in U_partitions]
+        h = [Up.b for Up in U_partitions]
+        self.Nu = len(H) # Number of convex sets whose union makes the control set (**excluding** the {0} set)
         qq = [(1./(1-1./dep.pq) if dep.pq!=1 else np.inf) for dep in
               self.specs.P.dependency]
         D = self.plant.D(self.specs)
-        #n_r = r.size
         n_q = len(self.specs.P.L)
-        bigM = getM(H,h)
+        # scaling
+        D_w = Polytope(self.specs.P.R,self.specs.P.r).computeScalingMatrix()
+        self.D_x = self.specs.X.computeScalingMatrix()
+        self.p_u,self.D_u = [None for _ in range(self.Nu)],[None for _ in range(self.Nu)]
+        for i in range(self.Nu):
+            # Scale to unity and re-center with respect to set {u_i: H[i]*u_i<=h[i]}
+            self.p_u[i] = np.mean(Polytope(A=H[i],b=h[i]).V,axis=0) # barycenter
+            self.D_u[i] = np.empty(H[i].shape)
+            for j in range(H[i].shape[0]):
+                alpha = cvx.Variable()
+                center = self.p_u[i]
+                ray = H[i][j]
+                cost = cvx.Maximize(alpha)
+                constraints = [H[i]*(center+alpha*ray)<=h[i]]
+                problem = cvx.Problem(cost,constraints)
+                problem.solve(**global_vars.SOLVER_OPTIONS)
+                self.D_u[i][j] = alpha.value*ray
+            self.D_u[i] = self.D_u[i].T
+        self.D_u_box = self.specs.U_ext.computeScalingMatrix()
         
         # Robust term for polytopic noise computation
         G,n_g = self.specs.X.A, self.specs.X.b.size
@@ -124,44 +138,77 @@ class MPC:
         sum_sigma = np.array(sum_sigma)
         
         # Setup MPC optimization problem
+        def make_ux():
+            """
+            Make input and state optimization variables.
+            
+            Returns
+            -------
+            variables : list
+                Dictionary of variable lists. 'x' amd 'u' are dimensional
+                (unscaled) states and inputs; 'xhat' and 'uhat' are
+                dimensionless (scaled) states and inputs.
+            """
+            uhat = [[cvx.Variable(self.D_u[i].shape[1]) for k in range(self.N)] for i in range(self.Nu)]
+            u = [[self.p_u[i]+self.D_u[i]*uhat[i][k] for k in range(self.N)] for i in range(self.Nu)]
+            xhat = [cvx.Variable(self.n_x) for k in range(self.N+1)]
+            x = [self.D_x*xhat[k] for k in range(self.N+1)]
+            variables = dict(u=u,x=x,uhat=uhat,xhat=xhat)
+            return variables
+        
+        self.make_ux = make_ux
+            
         self.x0 = cvx.Parameter(self.n_x)
         self.delta = cvx.Variable(self.Nu*self.N, boolean=True)
-        self.u = [self.D_u*cvx.Variable(self.n_u) for k in range(self.N)]
-        self.x = [self.D_x*cvx.Variable(self.n_x) for k in range(self.N+1)]
+        xu = self.make_ux()
+        self.u = xu['u']
+        self.x = xu['x']
+        xhat = xu['xhat']
+        
+        def get_u0_value():
+            """
+            Get the optimal value of the first input in the MPC horizon.
+            
+            Returns
+            -------
+            u0_opt : array
+                Optimal value of the first input in the MPC horizon.
+            """
+            return sum([self.u[__i][0].value for __i in range(self.Nu)])
+        
+        self.get_u0_value = get_u0_value
         
         Q = Q_coeff*np.eye(self.n_x)
         R = np.eye(self.n_u)
-        self.V = (sum([cvx.quad_form(la.inv(self.D_u)*self.u[k],R) for k in range(self.N)])+
-                  sum([cvx.quad_form(la.inv(self.D_x)*self.x[k],Q) for k in fullrange(1,self.N)]))
+        self.V = (sum([cvx.quad_form(la.inv(self.D_u_box)*sum([self.u[i][k] for i in range(self.Nu)]),R) for k in range(self.N)])+
+                  sum([cvx.quad_form(xhat[k],Q) for k in fullrange(1,self.N)]))
         self.cost = cvx.Minimize(self.V)
         
         def make_constraints(theta,x,u,delta,delta_sum_constraint=True):
             constraints = []
             # Nominal dynamics
-            constraints += [x[k+1] == self.plant.A*x[k]+self.plant.B*u[k] for k in range(self.N)]
+            sum_u = lambda k: sum([u[__i][k] for __i in range(self.Nu)])
+            constraints += [x[k+1] == self.plant.A*x[k]+self.plant.B*sum_u(k) for k in range(self.N)]
             constraints += [x[0] == theta]
             # Robustness constraint tightening
             G,g,n_g = self.specs.X.A, self.specs.X.b, self.specs.X.b.size
-            #print(sum([sum([np.array([la.norm(G[j].dot(mpow(A,k-1-i)).dot(D).dot(self.specs.P.L[l]),ord=qq[l])*self.specs.P.dependency[l].phi_direct(x[i],u[i]) for j in range(n_g)]) for l in range(n_q)]) for i in range(k)]))
-            #import sys
-            #sys.exit()
             constraints += [G*x[k]+
                             sum_sigma[(k-1)*n_g:k*n_g]+
                             sum([sum([
                             np.array([
                             la.norm(G[j].dot(mpow(self.plant.A,k-1-i)).dot(D).dot(self.specs.P.L[l]),ord=qq[l])
                             for j in range(n_g)])*
-                            self.specs.P.dependency[l].phi_direct(x[i],u[i])
+                            self.specs.P.dependency[l].phi_direct(x[i],sum_u(i))
                             for l in range(n_q)])
                             for i in range(k)])
                             <=g
                             for k in fullrange(self.N)]
             # Input constraint
             for i in range(self.Nu):
-                constraints += [H[i]*u[k] <= h[i]+bigM*delta[self.Nu*k+i] for k in range(self.N)]
+                constraints += [H[i]*u[i][k] <= h[i]*delta[self.Nu*k+i] for k in range(self.N)]
             # input is in at least one of the convex subsets
             if delta_sum_constraint:
-                constraints += [sum([delta[self.Nu*k+i] for i in range(self.Nu)]) == self.Nu-1 for k in range(self.N)]
+                constraints += [sum([delta[self.Nu*k+i] for i in range(self.Nu)]) <= 1 for k in range(self.N)]
             return constraints
         
         self.make_constraints = make_constraints
