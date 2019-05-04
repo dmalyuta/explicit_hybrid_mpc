@@ -1,4 +1,3 @@
 cvxpy==1.0.14
 pycddlib==2.0.0
-progressbar2
-git+git://github.com/elliptic-shiho/primefac-fork@master
+mpi4py==3.0.1

@@ -19,7 +19,6 @@ import uncertainty_sets as uc
 from set_synthesis import minRPI
 from specifications import Specifications
 from general import fullrange
-from tools import getM
 from plant import Plant
 
 """
@@ -346,7 +345,7 @@ class SatelliteZ(MPC):
     def __init__(self):
         super().__init__()
         # Parameters
-        self.N = 4 # Prediction horizon length
+        self.N = 1 # Prediction horizon length
         # Raw values
         pars = {'mu': 3.986004418e14,  # [m^3*s^-2] Standard gravitational parameter
                 'R_E': 6378137.,       # [m] Earth mean radius
@@ -494,60 +493,62 @@ class SatelliteXY(MPC):
         # Setup the RMPC problem        
         self.setup_RMPC(Q_coeff=1e-2)
 
-class Cart1D(MPC):
-    """
-    Double integrator dynamics with a non-convex input constraint (upper and
-    lower bounded to left and right, or zero).
-    """
-    def __init__(self):
-        super().__init__()
-        # Parameters
-        m = 1. # [kg] Cart mass
-        h = 1./20. # [s] Time step
-        self.N = 10 # Prediction horizon length
-        
-        # Discretized dynamics Ax+Bu
-        self.n_x,self.n_u = 2,1
-        A = np.array([[1.,h],[0.,1.]])
-        B = np.array([[h**2/2.],[h]])/m
-        
-        # Control constraints
-        self.Nu = 3 # Number of control convex subsets, whose union makes the control set
-        lb, ub = 0.05, 1.
-        P = [np.array([[1.],[-1.]]),np.array([[-1.],[1.]]),np.array([[1.],[-1.]])]
-        p = [np.array([ub*m,-lb*m]),np.array([ub*m,-lb*m]),np.zeros((2))]
-        bigM = getM(P,p) #np.array([ub*m,ub*m])*10
-        
-        # Control objectives
-        e_p_max = 0.1 # [m] Max position error
-        e_v_max = 0.2 # [m/s] Max velocity error
-        u_max = 10.*m # [N] Max control input
-        
-        # Cost
-        self.D_x = np.diag([e_p_max,e_v_max])
-        self.D_u = np.diag([u_max])
-        Q = 100.*la.inv(self.D_x).dot(np.eye(self.n_x)).dot(la.inv(self.D_x))
-        R = la.inv(self.D_u).dot(np.eye(self.n_u)).dot(la.inv(self.D_u))
-        
-        # MPC optimization problem
-        self.x = [self.D_x*cvx.Variable(self.n_x) for k in range(self.N+1)]
-        self.u = [self.D_u*cvx.Variable(self.n_u) for k in range(self.N)]
-        self.delta = cvx.Variable(self.Nu*self.N, boolean=True)
-        self.x0 = cvx.Parameter(self.n_x)
-        
-        self.V = sum([cvx.quad_form(self.x[k],Q)+
-                      cvx.quad_form(self.u[k],R) for k in range(self.N)])
-        self.cost = cvx.Minimize(self.V)
-        
-        def make_constraints(theta,x,u,delta,delta_sum_constraint=True):
-            constraints = []
-            constraints += [x[k+1] == A*x[k]+B*u[k] for k in range(self.N)]
-            constraints += [x[0] == theta]
-            constraints += [x[-1] == np.zeros(self.n_x)]
-            for i in range(self.Nu):
-                constraints += [P[i]*u[k] <= p[i]+bigM*delta[self.Nu*k+i] for k in range(self.N)]
-            if delta_sum_constraint:
-                constraints += [sum([delta[self.Nu*k+i] for i in range(self.Nu)]) <= self.Nu-1 for k in range(self.N)]
-            return constraints
-        
-        self.make_constraints = make_constraints
+# =============================================================================
+# class Cart1D(MPC):
+#     """
+#     Double integrator dynamics with a non-convex input constraint (upper and
+#     lower bounded to left and right, or zero).
+#     """
+#     def __init__(self):
+#         super().__init__()
+#         # Parameters
+#         m = 1. # [kg] Cart mass
+#         h = 1./20. # [s] Time step
+#         self.N = 10 # Prediction horizon length
+#         
+#         # Discretized dynamics Ax+Bu
+#         self.n_x,self.n_u = 2,1
+#         A = np.array([[1.,h],[0.,1.]])
+#         B = np.array([[h**2/2.],[h]])/m
+#         
+#         # Control constraints
+#         self.Nu = 3 # Number of control convex subsets, whose union makes the control set
+#         lb, ub = 0.05, 1.
+#         P = [np.array([[1.],[-1.]]),np.array([[-1.],[1.]]),np.array([[1.],[-1.]])]
+#         p = [np.array([ub*m,-lb*m]),np.array([ub*m,-lb*m]),np.zeros((2))]
+#         bigM = getM(P,p) #np.array([ub*m,ub*m])*10
+#         
+#         # Control objectives
+#         e_p_max = 0.1 # [m] Max position error
+#         e_v_max = 0.2 # [m/s] Max velocity error
+#         u_max = 10.*m # [N] Max control input
+#         
+#         # Cost
+#         self.D_x = np.diag([e_p_max,e_v_max])
+#         self.D_u = np.diag([u_max])
+#         Q = 100.*la.inv(self.D_x).dot(np.eye(self.n_x)).dot(la.inv(self.D_x))
+#         R = la.inv(self.D_u).dot(np.eye(self.n_u)).dot(la.inv(self.D_u))
+#         
+#         # MPC optimization problem
+#         self.x = [self.D_x*cvx.Variable(self.n_x) for k in range(self.N+1)]
+#         self.u = [self.D_u*cvx.Variable(self.n_u) for k in range(self.N)]
+#         self.delta = cvx.Variable(self.Nu*self.N, boolean=True)
+#         self.x0 = cvx.Parameter(self.n_x)
+#         
+#         self.V = sum([cvx.quad_form(self.x[k],Q)+
+#                       cvx.quad_form(self.u[k],R) for k in range(self.N)])
+#         self.cost = cvx.Minimize(self.V)
+#         
+#         def make_constraints(theta,x,u,delta,delta_sum_constraint=True):
+#             constraints = []
+#             constraints += [x[k+1] == A*x[k]+B*u[k] for k in range(self.N)]
+#             constraints += [x[0] == theta]
+#             constraints += [x[-1] == np.zeros(self.n_x)]
+#             for i in range(self.Nu):
+#                 constraints += [P[i]*u[k] <= p[i]+bigM*delta[self.Nu*k+i] for k in range(self.N)]
+#             if delta_sum_constraint:
+#                 constraints += [sum([delta[self.Nu*k+i] for i in range(self.Nu)]) <= self.Nu-1 for k in range(self.N)]
+#             return constraints
+#         
+#         self.make_constraints = make_constraints
+# =============================================================================

@@ -10,16 +10,15 @@ Copyright 2019 University of Washington. All rights reserved.
 import sys
 sys.path.append('../')
 
-import os
 import time
 import pickle
 import numpy as np
 
 import global_vars
 from tree import NodeData
-from tools import split_along_longest_edge,simplex_volume,get_nodes_in_queue
+from tools import split_along_longest_edge,simplex_volume
 
-def ecc(oracle,node,location,status_writer,mutex):
+def ecc(oracle,node,location,status_publisher):
     """
     Implementation of [Malyuta2019a] Algorithm 2 lines 4-16. Pass a tree root
     node and this grows the tree until its leaves are feasible partition cells.
@@ -40,9 +39,10 @@ def ecc(oracle,node,location,status_writer,mutex):
     location : string
         Location in tree of this node. String where '0' at index i means take
         left child, '1' at index i means take right child (at depth value i).
-    status_writer : StatusWriter
+    status_publisher : StatusWriter
         Writer to a status file.
     """
+    print('slave (%d): ecc at location = %s'%(global_vars.COMM.Get_rank(),location))
     c_R = np.average(node.data.vertices,axis=0) # Simplex barycenter
     if not oracle.P_theta(theta=c_R,check_feasibility=True):
         raise RuntimeError('STOP, Theta contains infeasible regions')
@@ -53,20 +53,20 @@ def ecc(oracle,node,location,status_writer,mutex):
             child_left = NodeData(vertices=S_1)            
             child_right = NodeData(vertices=S_2)
             node.grow(child_left,child_right)
-            mutex.lock('incrementing simplex count')
-            status_writer.update(simplex_count_increment=1)
-            mutex.unlock()
+            status_publisher.update(simplex_count_increment=1)
             # Recursive call for each resulting simplex
-            if len(get_nodes_in_queue())<global_vars.N_PROC:
-                # Save the right child to a separate file, to be partitioned by
-                # another thread
-                mutex.lock('saving new node')
-                with open(global_vars.NODE_DIR+('node_%s.pkl'%(location+'0')),'wb') as f:
-                    pickle.dump(node.left,f)
-                mutex.unlock()
+            # check if any idle slave processes are available
+            req = global_vars.COMM.irecv(source=global_vars.SCHEDULER_PROC, tag=global_vars.IDLE_SLAVE_COUNT_TAG)
+            msg_available,idle_slave_count = req.test()
+            if msg_available:
+                print('slave (%d): idle slave count is %d'%(global_vars.COMM.Get_rank(),idle_slave_count))
+            if msg_available and idle_slave_count>0:
+                # offload the left child to be processed by another slave
+                new_task = dict(branch_root=node.left,location=location+'0',algorithm='ecc',abort=False)
+                global_vars.COMM.isend(new_task,dest=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_BRANCH_TAG)
             else:
-                ecc(oracle,node.left,location+'0',status_writer,mutex)
-            ecc(oracle,node.right,location+'1',status_writer,mutex)
+                ecc(oracle,node.left,location+'0',status_publisher)
+            ecc(oracle,node.right,location+'1',status_publisher)
         else:
             # Assign feasible commutation to simplex
             vertex_inputs_and_costs = [oracle.P_theta_delta(theta=vertex,delta=delta_hat)
@@ -79,9 +79,7 @@ def ecc(oracle,node,location,status_writer,mutex):
                                  vertex_costs=vertex_costs,
                                  vertex_inputs=vertex_inputs)
             volume_closed = simplex_volume(node.data.vertices)
-            mutex.lock('saving leaf')
-            status_writer.update(volume_filled_increment=volume_closed)
-            mutex.unlock()
+            status_publisher.update(volume_filled_increment=volume_closed)
 
 def lcss(oracle,node,location,status_writer,mutex):
     """
@@ -226,47 +224,51 @@ def lcss(oracle,node,location,status_writer,mutex):
                                    vertex_inputs=vertex_inputs_S_2)
             add(child_left,child_right)
 
-def spinner(proc_num,algorithm_call,status_writer,mutex,wait_time=5.):
+def spin(algorithm_call,status_publisher):
     """
+    A loop which waits (by passive blocking) for the roots of a new branch to
+    partition to be received from the scheduler process. When received, the
+    branch is partitioned. When done, the partitioned branch ("grown tree") is
+    sent back to the scheduler. The scheduler is responsible for aborting this
+    loop.
+    
     Parameters
     ----------
-    proc_num : int
-        Process number.
     algorithm_call : callable
         Callable algorithm with signature algorithm_call(root,location) where
         root (Tree) is the subtree root and location (string) is the subtree
         root's location in the main tree.
-    status_writer : StatusWriter
+    status_publisher : StatusPublisher
         Writer to a status file.
     wait_time : float, optional
         How many seconds to wait before checking the tree node queue.
     """
+    finished_work_req = None
     while True:
-        time.sleep(wait_time)
-        mutex.lock('checking queue')
-        nodes_in_queue = get_nodes_in_queue()
-        if len(nodes_in_queue)==0:
-            mutex.unlock()
+        # Block until new data is received from scheduler
+        print('slave (%d): waiting for data'%(global_vars.COMM.Get_rank()))
+        data = global_vars.COMM.recv(source=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_WORK_TAG)
+        if data['abort']:
+            # Request from scheduler to stop
+            return
         else:
-            with open(nodes_in_queue[0],'rb') as subtree_file:
-                subtree = pickle.load(subtree_file)
-            subtree_location = nodes_in_queue[0][len(global_vars.NODE_DIR+'node_'):-4]
-            # Update status
-            status_writer.set_new_root_simplex(subtree.data.vertices,subtree_location)
-            status_writer.update(active=True)
-            os.remove(nodes_in_queue[0])
-            mutex.unlock('working on branch %s'%(subtree_location))
-            # Partition this node
+            print('slave (%d): got branch at location = %s'%(global_vars.COMM.Get_rank(),data['location']))
+            # Get data about the branch to be worked on
+            branch = data['branch_root']
+            branch_location = data['location']
+            status_publisher.set_new_root_simplex(branch.data.vertices,branch_location)
+            status_publisher.update(active=True)
+            # Do work on this branch (i.e. partition this simplex)
             try:
-                algorithm_call(subtree,subtree_location)
+                print('slave (%d): calling algorithm'%(global_vars.COMM.Get_rank()))
+                algorithm_call(data['algorithm'],branch,branch_location)
             except:
-                mutex.lock('algorithm failed :(')
-                status_writer.update(failed=True)
-                mutex.unlock()
+                status_publisher.update(failed=True)
                 raise
-            # Update the full tree
-            mutex.lock('saving branch')
-            with open(global_vars.NODE_DIR+('tree_%s.pkl'%(subtree_location)),'wb') as f:
-                pickle.dump(subtree,f)
-            status_writer.update(active=False)
-            mutex.unlock()
+            # Send completed branch back to scheduler
+            if finished_work_req is not None and not finished_work_req.test():
+                # scheduler did not yet read the previous finished work message
+                # Wait until it does
+                finished_work_req.wait()
+            finished_work_req = global_vars.COMM.isend(data,dest=global_vars.SCHEDULER_PROC,tag=global_vars.FINISHED_BRANCH_TAG)
+            status_publisher.update(active=False)

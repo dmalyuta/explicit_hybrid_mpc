@@ -52,6 +52,22 @@ class Tree:
         self.data = data
         self.top = top
         
+        
+    def copy(self,node):
+        """
+        Copy this tree to node.
+        
+        Parameters
+        ----------
+        node : Tree
+            The node to be copied to.
+        """
+        node.data = self.data
+        node.top = self.top
+        if not self.is_leaf():
+            node.left = self.left
+            node.right = self.right
+        
     def grow(self,left,right):
         """
         Create a left and a right child.
