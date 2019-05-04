@@ -125,10 +125,10 @@ class MainStatusPublisher:
         open(global_vars.STATISTICS_FILE,'w').close()
         
         # ETA calculator
-        eta_window_duration = 30. # [s] Duration of window for finite-differencing to estimate volume filling rate
-        eta_time_constant = 5*60. # [s] Time constant for ETA (more precisely - volume filling rate) estimation
+        eta_window_duration = int(10./call_period)*call_period # [s] Duration of window for finite-differencing to estimate volume filling rate
+        eta_time_constant = 3*60. # [s] Time constant for ETA (more precisely - volume filling rate) estimation
         self.eta_last_measurement = None # Memory variable for volume filling rate measurement via finite-differencing
-        self.eta_estimator = ETACalculator(call_period=eta_window_duration,time_constant=eta_time_constant)
+        self.eta_estimator = ETACalculator(call_period=eta_window_duration,time_constant=eta_time_constant,store_history=False)
         
         # Variables for controlling the writing frequency        
         self.eta_rls_update_counter = 0
@@ -142,6 +142,7 @@ class MainStatusPublisher:
         """Resets memory variables estimation."""
         self.eta_estimator.reset()
         self.eta_last_measurement = None
+        self.eta_rls_update_counter = 0
     
     def update(self,proc_status,force=False):
         """

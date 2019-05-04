@@ -191,3 +191,26 @@ def discretize(Ac,Bc,dt):
     A = M[:Ac.shape[0],:Ac.shape[0]]
     B = M[:Ac.shape[0],Ac.shape[0]:]
     return A,B
+
+def fullrange(a,b=None):
+    """
+    Return an integer range iterator, which includes the final point
+    and which starts at 1 by default.
+    
+    Parameters
+    ----------
+    a : int
+        Interval start. If b is not specified, interval start is
+        taken to be 1 and a is used as the interval end.
+    b : int, optional
+        Interval end.
+        
+    Returns
+    -------
+    : list
+        Integer range {a,a+1,a+2,...,b-1,b}.
+    """
+    if b is None:
+        return range(1,a+1)
+    else:
+        return range(a,b+1)

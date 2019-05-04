@@ -14,10 +14,8 @@ import numpy.linalg as la
 import scipy.linalg as sla
 import cvxpy as cvx
 
-import general
 import global_vars
 from polytope import Polytope
-import set_synthesis as ss
 
 class Set:
     def __init__(self, *args, **kwargs):
@@ -31,7 +29,7 @@ class Set:
         Setup of the specific uncertainty set goes in here. A particular set
         may accept further arguments, which are passed down from __init__.
         """
-        raise NotImplementedError(general.ERROR+"You must define the "
+        raise NotImplementedError(global_vars.ERROR+"You must define the "
                                   "uncertainty set setup() method") 
         
     def generateRandomPoint(self):
@@ -44,7 +42,7 @@ class Set:
         : array
             The random point.
         """
-        raise NotImplementedError(general.ERROR+"You must define the "
+        raise NotImplementedError(global_vars.ERROR+"You must define the "
                                   "uncertainty set generateRandomPoint() "
                                   "method") 
 
@@ -178,7 +176,7 @@ class UncertaintySet(Set):
                 else:
                     H.sinusoidalExcitation(**excitation["parameters"])
             else:
-                raise ValueError(general.ERROR+"Unknown excitation type")
+                raise ValueError(global_vars.ERROR+"Unknown excitation type")
         P,p = H.convertToPolytope()[:2]
         sampling_function = lambda t: H(t)
         M = M if M is not None else np.eye(dim)
@@ -287,7 +285,7 @@ class Hyperrectangle(Set):
             return self.excitation_value
         if self.excitation == self.excitation_types.SINUSOIDAL:
             if t is None:
-                raise ValueError(general.ERROR+
+                raise ValueError(global_vars.ERROR+
                                  "t must be specified for sinusoidal disturbance")
             return self.excitation_value(t)
         elif self.excitation == self.excitation_types.DEFAULT:
@@ -304,7 +302,7 @@ class Hyperrectangle(Set):
                 The value to be output.
         """
         if np.any(value>self.ub) or np.any(value<self.lb):
-            raise ValueError(general.ERROR+"Value cannot be outside the hyperrectangle")
+            raise ValueError(global_vars.ERROR+"Value cannot be outside the hyperrectangle")
         
         self.excitation = self.excitation_types.CONSTANT
         self.excitation_value = value
@@ -325,7 +323,7 @@ class Hyperrectangle(Set):
                 Sinusoid offset from zero.
         """
         if np.any(offset+amplitude>self.ub) or np.any(offset-amplitude<self.lb):
-            raise ValueError(general.ERROR+
+            raise ValueError(global_vars.ERROR+
                              "Sinusoid cannot go outside the hyperrectangle")
 
         self.excitation = self.excitation_types.SINUSOIDAL
@@ -352,11 +350,11 @@ class Ellipsoid(Set):
                 shape.
         """
         if not np.allclose(P, P.T):
-            raise ValueError(general.ERROR+"P must be symmetric")
+            raise ValueError(global_vars.ERROR+"P must be symmetric")
         if not np.all(la.eigvals(P) > 0):
-            raise ValueError(general.ERROR+"P must be positive definite")
+            raise ValueError(global_vars.ERROR+"P must be positive definite")
         if la.cond(P) > 1e5:
-            raise ValueError(general.ERROR+"P is very badly conditioned (condition number "
+            raise ValueError(global_vars.ERROR+"P is very badly conditioned (condition number "
                             "%.4e)"%(la.cond(P)))
             
         self.P = P # {x : x^T*P*x <= t}
@@ -383,7 +381,7 @@ class Ellipsoid(Set):
         : array
             The random point.
         """
-        return ss.sampleUniformEllipsoid(L=self.L,t=t)
+        return sampleUniformEllipsoid(L=self.L,t=t)
     
     def convertToHyperrectangle(self, t):
         """
@@ -514,3 +512,44 @@ class AffineSet:
         self.x0 = x0
         self.E = E
         self.v = v
+
+def sampleUniformEllipsoid(P=None,L=None,t=1.):
+    """
+    Uniformly samples the ellipsoid {x : x^T*P*x <= t}. Implements [1].
+    
+    [1] Dezert, J. and Musso, C. "An Efficient Method for Generating Points
+    Uniformly Distributed in Hyperellipsoids", Proceedings of the
+    Workshop on Estimation, Tracking and Fusion: A Tribute to Yaakov
+    Bar-Shalom, Naval Postgraduate School, May 2001.
+    
+    Parameters
+    ----------
+    P : array, optional
+        Ellipsoid set definition, must be provided if L is not.
+    L : array, optional
+        Lower-triangular matrix from cholesky decomposition of P^-1, must
+        be provided if P is not.
+    t : float, optional
+        Right hand side of the inequality ellipsoid definition, which
+        scales the ellipsoid.
+        
+    Returns
+    -------
+    : array
+        The random point.
+    """
+    nz = P.shape[0] if P is not None else L.shape[0]
+    X_Cnz = np.random.randn(nz)
+    # Points uniformly distributed on hypersphere
+    X_Cnz = np.divide(X_Cnz,np.kron(np.ones(nz),np.sqrt(sum(X_Cnz**2))))
+    # Points with pdf nz*r^(nz-1); 0<r<1
+    R = np.ones(nz)*(np.random.rand()**(1./nz))
+    # Point in the hypersphere
+    unif_sph = np.multiply(R,X_Cnz)
+    # Hypersphere to hyperellipsoid mapping
+    if L is None:
+        L = la.cholesky(la.inv(P))
+    unif_ell = L.dot(unif_sph)
+    # Translation
+    z_fa = unif_ell*np.sqrt(t)
+    return z_fa

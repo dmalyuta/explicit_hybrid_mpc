@@ -12,8 +12,6 @@ import numpy as np
 import numpy.linalg as la
 from progressbar import progressbar
 
-import general
-
 def array2dict(array,name):
     """
     Convert an 2D array to a dictionary where each entry is one
@@ -138,15 +136,12 @@ class Simulator:
         if label is not None:
             self.sim_history.label = label
         
-        # Progress bar appearance
-        widgets = general.makeWidgets(label)
-        
         self.G.init(x_0)
         
         x = self.G.x_0
         u = np.zeros(self.G.m)
         times = np.linspace(0,self.T,int(self.T/self.T_d+1))
-        for t in progressbar(times, widgets=widgets):
+        for t in progressbar(times):
             x_prev = np.copy(x)
             v = self.state_estimation_noise(t,x,u)
             z = x+v if t>0 else x # "Measured" state

@@ -1,3 +1,4 @@
 cvxpy==1.0.21
 pycddlib==2.0.0
 mpi4py==3.0.1
+progressbar==3.39.2

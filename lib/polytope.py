@@ -17,7 +17,18 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 import global_vars
-import general
+
+class PolytopeError(Exception):
+    """
+    Custom exception of this code.
+    
+    Parameters
+    ----------
+    message : str
+        Descriptive test.
+    """
+    def __init__(self,message,*args,**kwargs):
+        Exception.__init__(self,global_vars.ERROR+message,*args,**kwargs)
 
 def subtractHyperrectangles(X_inner,X_outer):
     """
@@ -109,12 +120,12 @@ class Polytope(object):
                 xi_min = R[i][0]
                 xi_max = R[i][1]
                 if xi_min > xi_max:
-                    raise general.ControlError("x%d_min > x%d_max" % (i,i))
+                    raise PolytopeError("x%d_min > x%d_max" % (i,i))
                 self.A[2*i,i],self.A[2*i+1,i] = 1,-1
                 self.b[2*i],self.b[2*i+1] = xi_max,-xi_min
             self._hrep2vrep()
         if V is not False and len(self.V)==0:
-            raise general.ControlError("Empty polytope")
+            raise PolytopeError("Empty polytope")
         self.n = self.V[0].size if V is not False else self.A.shape[1] # Polytope \in R^n
 
     def _hrep2vrep(self):
@@ -267,7 +278,7 @@ class Polytope(object):
         if not (problem.status==cvx.OPTIMAL or
                 problem.status==cvx.OPTIMAL_INACCURATE):
             # Optimization failed due to ugly polytope
-            raise general.ControlError("Radius computation failed (status %s)"
+            raise PolytopeError("Radius computation failed (status %s)"
                                        %(problem.status))
         return R
     
@@ -357,7 +368,7 @@ class Polytope(object):
         problem = cvx.Problem(cost, constraints)
         optimal_value = problem.solve(**global_vars.SOLVER_OPTIONS)
         if optimal_value == np.inf:
-            raise general.ControlError("Infeasible problem for bounding box")
+            raise PolytopeError("Infeasible problem for bounding box")
         u = np.array(u.value.T).flatten()
         # Find lower bound
         l = cvx.Variable(self.n)
@@ -368,7 +379,7 @@ class Polytope(object):
         problem = cvx.Problem(cost, constraints)
         optimal_value = problem.solve(**global_vars.SOLVER_OPTIONS)
         if optimal_value == np.inf:
-            raise general.ControlError("Infeasible problem for bounding box")
+            raise PolytopeError("Infeasible problem for bounding box")
         l = np.array(l.value.T).flatten()
         return l,u
     
@@ -412,10 +423,10 @@ class Polytope(object):
         # Project polytope
         if coords is not None:
             if len(coords)!=2:
-                raise general.ControlError("Precisely two projection axes must be specified")
+                raise PolytopeError("Precisely two projection axes must be specified")
             vx = np.row_stack(self.project(coords,only_vertices=True))
         elif self.n!=2:
-            raise general.ControlError("Polytopes not in R^2 must be projected")
+            raise PolytopeError("Polytopes not in R^2 must be projected")
         else:
             vx = np.vstack(self.V)
         co = ss.ConvexHull(vx)

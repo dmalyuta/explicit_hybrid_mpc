@@ -34,3 +34,4 @@ STATISTICS_FILE = DATA_DIR+'statistics.pkl' # Overall statistics
 TREE_FILE = DATA_DIR+'tree.pkl' # Overall tree
 ETA_RLS_FILE = DATA_DIR+'rls.pkl' # Overall tree
 BRANCHES_FILE = DATA_DIR+'branches.pkl' # Tree branches, used for tree building
+ERROR = '>>> ' # Error message prefix

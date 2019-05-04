@@ -14,11 +14,10 @@ import scipy.linalg as sla
 import cvxpy as cvx
 
 import global_vars
+import tools
 from polytope import Polytope,subtractHyperrectangles
 import uncertainty_sets as uc
-from set_synthesis import minRPI
 from specifications import Specifications
-from general import fullrange
 from plant import Plant
 
 """
@@ -126,7 +125,7 @@ class MPC:
             problem = cvx.Problem(cost,constraints)
             return problem.solve(**global_vars.SOLVER_OPTIONS)
         sum_sigma = []
-        for k in fullrange(self.N):
+        for k in tools.fullrange(self.N):
             sum_sigma_facet = []
             for j in range(n_g):
                 sum_sigma_facet.append(sum([robust_term(i,j,k) for i in range(k)]))
@@ -177,7 +176,7 @@ class MPC:
         Q = Q_coeff*np.eye(self.n_x)
         R = np.eye(self.n_u)
         self.V = (sum([cvx.quad_form(la.inv(self.D_u_box)*sum([self.u[i][k] for i in range(self.Nu)]),R) for k in range(self.N)])+
-                  sum([cvx.quad_form(xhat[k],Q) for k in fullrange(1,self.N)]))
+                  sum([cvx.quad_form(xhat[k],Q) for k in tools.fullrange(1,self.N)]))
         self.cost = cvx.Minimize(self.V)
         
         def make_constraints(theta,x,u,delta,delta_sum_constraint=True):
@@ -198,7 +197,7 @@ class MPC:
                             for l in range(n_q)])
                             for i in range(k)])
                             <=g
-                            for k in fullrange(self.N)]
+                            for k in tools.fullrange(self.N)]
             # Input constraint
             for i in range(self.Nu):
                 constraints += [H[i]*u[i][k] <= h[i]*delta[self.Nu*k+i] for k in range(self.N)]
@@ -208,134 +207,6 @@ class MPC:
             return constraints
         
         self.make_constraints = make_constraints
-
-class RandomSystem(MPC):
-    """
-    Random controllable n-dimensional generalized oscillator.
-    """
-    def __init__(self,n_x):
-        """
-        Parameters
-        ----------
-        n_x : int
-            State dimension.
-        """
-        self.N = 2
-        # Make plant
-        # continuous-time
-        self.n_x, self.n_u = n_x, n_x//2
-        A_c, B_c = self.gensys()
-        # discrete-time
-        T_d = 2*np.pi/(10*max([la.norm(eig) for eig in la.eigvals(A_c)]))
-        M = sla.expm(np.block([[A_c,B_c],[np.zeros((self.n_u,self.n_u+self.n_x))]])*T_d)
-        A = M[:self.n_x,:self.n_x]
-        B = M[:self.n_x,self.n_x:]
-        # force disturbance on individual masses
-        E_c = np.vstack([np.zeros([self.n_u,self.n_u]),np.eye(self.n_u)])
-        M = sla.expm(np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_u+self.n_x))]])*T_d)
-        E = M[:self.n_x,self.n_x:]
-        self.plant = Plant(T_d,A,B,E)
-        # Design LQR controller
-        Q = 0.1*np.eye(A.shape[0])
-        R = np.eye(B.shape[1])
-        P = sla.solve_discrete_are(A,B,Q,R)
-        K = -la.solve(R+B.T.dot(P).dot(B),B.T.dot(P).dot(A))
-        # Get minimum RCI set
-        Acl = A+B.dot(K)
-        noise_lvl = 0.001
-        noise = Polytope(R=[(-noise_lvl,noise_lvl) for _ in range(E.shape[1])])
-        F,f = noise.A,noise.b
-        self.rpi = minRPI(Acl,E,F,f)
-        # Create admissible input sets
-        Uvx = []
-        for vx in self.rpi.V:
-            Uvx.append(K.dot(vx))
-        Umax = np.max(np.abs(Uvx),axis=0)
-        min_frac = 0.001
-        U_ext = Polytope(R=[(-uax,uax) for uax in Umax])
-        U_int = Polytope(R=[(-min_frac*uax,min_frac*uax) for uax in Umax])
-        # Convert polytopic to state-dependent uncertainty
-        nx2_max = np.max([la.norm(vx) for vx in self.rpi.V])
-        R = noise.radius()
-        Puc = uc.UncertaintySet()
-        Puc.addDependentTerm('process',uc.DependencyDescription(
-                             lambda nfx:nfx*R/nx2_max*0.4,pq=2,px=2),
-                             dim=E.shape[1])
-        one = np.ones(E.shape[1])
-        Puc.addIndependentTerm('process',lb=-0.*one,ub=0.*one)
-        # Make specifications
-        self.specs = Specifications(self.rpi,(U_int,U_ext),Puc)
-        # Setup the RMPC problem
-        self.setup_RMPC(Q_coeff=np.max(Q))
-        
-    def gensys(self,decay=dict(min=1.,max=10.),min_period=1.,
-               min_damping=0.3,prob_oscillatory=0.8,mass=dict(min=0.1,max=1.)):
-        """
-        Generates a controllable n-dimensional generalized oscillator,
-    
-            M\ddot r+C\dot r+Kr = Lu,
-            
-        in state-space representation.
-        
-        Parameters
-        ----------
-        decay : dict, optional
-            Minimum and maximum decay rate time constant.
-        min_period : float, optional
-            Minimum oscillation period.
-        min_damping : float, optional
-            Minimum damping ratio, must be \in [0,1].
-        prob_oscillatory : float, optional
-            Probability of generating an oscillating pole pair.
-        mass : dict, optional
-            Minimum and maximum oscillator mass.
-            
-        Returns
-        -------
-        sys : Plant
-            The dynamical system.
-        """
-        if self.n_x%2!=0:
-            raise AssertionError('gensys can only handle even state dimension')
-        # Parameters
-        sigma_d_fun = lambda tau: 1/tau
-        omega_d_fun = lambda p: 2*np.pi/p
-        sigma_d_min = sigma_d_fun(decay['min'])
-        sigma_d_max = sigma_d_fun(decay['max'])
-        omega_d_max = omega_d_fun(min_period)
-        max_phi = np.tan(np.arccos(min_damping))
-        # Generate the decoupled oscillators in the modal basis
-        C_modal,K_modal = np.eye(0),np.eye(0)
-        while C_modal.shape[0]<self.n_x/2:
-            # Randomly pick if oscillator is pure damper
-            pole_type = ('oscillator' if np.random.rand()<prob_oscillatory else
-                         'aperiodic')
-            sigma_d = np.random.uniform(sigma_d_min,sigma_d_max)
-            omega_d = (0. if pole_type=='aperiodic' else
-                       np.random.uniform(high=min(omega_d_max,sigma_d*max_phi)))
-            omega_n = la.norm(np.array([sigma_d,omega_d]))
-            zeta = sigma_d/omega_n
-            C_modal = sla.block_diag(C_modal,2*zeta*omega_n)
-            K_modal = sla.block_diag(K_modal,omega_n**2)
-        # Generate the modal matrix
-        # It's columns are the orthonormal mode shapes
-        c0 = C_modal.shape[0]
-        T = la.qr(np.random.rand(c0,c0),mode='complete')[0]
-        # Generate the mass matrix
-        # We make a diagonal matrix, which means our configuration-space oscillator
-        # consists of n masses interconnected by random combinations of springs and
-        # dampers of varying stiffness and friction
-        M = np.diag(np.random.uniform(mass['min'],mass['max'],c0))
-        # Transform oscillators in modal basis to the configuration space
-        sqrtM = sla.sqrtm(M)
-        C = sqrtM.dot(T).dot(C_modal).dot(T.T).dot(sqrtM)
-        K = sqrtM.dot(T).dot(K_modal).dot(T.T).dot(sqrtM)
-        L = sqrtM.dot(T)
-        # Convert to state-space representation
-        A = np.block([[np.zeros((c0,c0)),np.eye(c0)],
-                      [-la.solve(M,K),-la.solve(M,C)]])
-        B = np.vstack([np.zeros((c0,L.shape[1])),la.solve(M,L)])
-        return A,B
 
 class SatelliteZ(MPC):
     """
@@ -492,63 +363,3 @@ class SatelliteXY(MPC):
 
         # Setup the RMPC problem        
         self.setup_RMPC(Q_coeff=1e-2)
-
-# =============================================================================
-# class Cart1D(MPC):
-#     """
-#     Double integrator dynamics with a non-convex input constraint (upper and
-#     lower bounded to left and right, or zero).
-#     """
-#     def __init__(self):
-#         super().__init__()
-#         # Parameters
-#         m = 1. # [kg] Cart mass
-#         h = 1./20. # [s] Time step
-#         self.N = 10 # Prediction horizon length
-#         
-#         # Discretized dynamics Ax+Bu
-#         self.n_x,self.n_u = 2,1
-#         A = np.array([[1.,h],[0.,1.]])
-#         B = np.array([[h**2/2.],[h]])/m
-#         
-#         # Control constraints
-#         self.Nu = 3 # Number of control convex subsets, whose union makes the control set
-#         lb, ub = 0.05, 1.
-#         P = [np.array([[1.],[-1.]]),np.array([[-1.],[1.]]),np.array([[1.],[-1.]])]
-#         p = [np.array([ub*m,-lb*m]),np.array([ub*m,-lb*m]),np.zeros((2))]
-#         bigM = getM(P,p) #np.array([ub*m,ub*m])*10
-#         
-#         # Control objectives
-#         e_p_max = 0.1 # [m] Max position error
-#         e_v_max = 0.2 # [m/s] Max velocity error
-#         u_max = 10.*m # [N] Max control input
-#         
-#         # Cost
-#         self.D_x = np.diag([e_p_max,e_v_max])
-#         self.D_u = np.diag([u_max])
-#         Q = 100.*la.inv(self.D_x).dot(np.eye(self.n_x)).dot(la.inv(self.D_x))
-#         R = la.inv(self.D_u).dot(np.eye(self.n_u)).dot(la.inv(self.D_u))
-#         
-#         # MPC optimization problem
-#         self.x = [self.D_x*cvx.Variable(self.n_x) for k in range(self.N+1)]
-#         self.u = [self.D_u*cvx.Variable(self.n_u) for k in range(self.N)]
-#         self.delta = cvx.Variable(self.Nu*self.N, boolean=True)
-#         self.x0 = cvx.Parameter(self.n_x)
-#         
-#         self.V = sum([cvx.quad_form(self.x[k],Q)+
-#                       cvx.quad_form(self.u[k],R) for k in range(self.N)])
-#         self.cost = cvx.Minimize(self.V)
-#         
-#         def make_constraints(theta,x,u,delta,delta_sum_constraint=True):
-#             constraints = []
-#             constraints += [x[k+1] == A*x[k]+B*u[k] for k in range(self.N)]
-#             constraints += [x[0] == theta]
-#             constraints += [x[-1] == np.zeros(self.n_x)]
-#             for i in range(self.Nu):
-#                 constraints += [P[i]*u[k] <= p[i]+bigM*delta[self.Nu*k+i] for k in range(self.N)]
-#             if delta_sum_constraint:
-#                 constraints += [sum([delta[self.Nu*k+i] for i in range(self.Nu)]) <= self.Nu-1 for k in range(self.N)]
-#             return constraints
-#         
-#         self.make_constraints = make_constraints
-# =============================================================================
