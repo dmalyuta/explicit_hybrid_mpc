@@ -23,6 +23,7 @@ class WorkerStatusPublisher:
     def __init__(self):
         self.data = dict(status='idle', # {'active','idle'}
                          current_branch='', # Location in tree of current subtree's root
+                         algorithm='', # Which algorithm is being used (ecc or lcss)
                          volume_filled_total=0., # [-] Absolute units
                          volume_filled_current=0., # [%] of current root simplex's volume
                          simplex_count_total=0, # [-] How many simplices generated overall
@@ -64,7 +65,7 @@ class WorkerStatusPublisher:
         self.data['time_active_current'] = 0.
         self.__write()
     
-    def update(self,active=None,failed=False,volume_filled_increment=None,simplex_count_increment=None):
+    def update(self,active=None,failed=False,algorithm=None,volume_filled_increment=None,simplex_count_increment=None):
         """
         Update the data.
         
@@ -72,6 +73,10 @@ class WorkerStatusPublisher:
         ----------
         active : bool, optional
             ``True`` if the process is in the 'active' state.
+        failed : bool, optional
+            ``True`` if algorithm failed (worker process shutdown)
+        algorithm : {'ecc','lcss'}, optional
+            Which algorithm is being executed?
         volume_filled_increment : float, optional
             Volume of closed lead.
         simplex_count_increment : int, optional
@@ -92,6 +97,9 @@ class WorkerStatusPublisher:
             tools.debug_print('sending status update, status = %s'%(self.data['status']))
         if failed is True:
             self.data['status'] = 'failed'
+        # Update algorithm
+        if algorithm is not None:
+            self.data['algorithm'] = algorithm
         # Update volume counters
         if volume_filled_increment is not None:
             self.data['volume_filled_total'] += volume_filled_increment
@@ -349,7 +357,7 @@ class Worker:
                 branch = data['branch_root']
                 branch_location = data['location']
                 self.status_publisher.set_new_root_simplex(branch.data.vertices,branch_location)
-                self.status_publisher.update(active=True)
+                self.status_publisher.update(active=True,algorithm=data['action'])
                 # Do work on this branch (i.e. partition this simplex)
                 try:
                     tools.debug_print('calling algorithm')

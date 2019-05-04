@@ -111,6 +111,7 @@ class MainStatusPublisher:
                         status_file.write('\n'.join([
                                 '# proc %d'%(global_vars.WORKER_PROCS[i]),
                                 'status: %s'%(data['status']),
+                                'algorithm: %s'%(data['algorithm']),
                                 'current branch: %s'%(data['current_branch']),
                                 'volume filled (total [-]): %.4e'%(data['volume_filled_total']),
                                 'volume filled (current [%%]): %.4e'%(data['volume_filled_current']*100.),
