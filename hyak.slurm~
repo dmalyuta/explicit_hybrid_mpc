@@ -13,13 +13,9 @@
 ## edit -- nodes: number of nodes to use, tasks: nodes * cores per node 
 #SBATCH --nodes=11 --ntasks-per-node=28
 
-# Module loading
-module load icc_19-impi_2019 # Intel MPI
-
-# Run script
 source activate py36
 cd /gscratch/stf/danylo/explicit_hybrid_mpc
-# partition using 11*28=308 processes (1 scheduler, 307 workers)
-mpiexec -n 308 ipython main.py
+# Run partitioning process with 11*28=308 processes (1 scheduler, 307 workers)
+mpiexec -n 308 ipython master.py
 
 
