@@ -15,7 +15,7 @@ EXAMPLE = 'cwh_xy' # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'
 ABS_FRAC = 0.25 # Fraction of full set for computing partition absolute error tolerance
 REL_ERR = 1.0 # Partition relative error tolerance
 SOLVER_OPTIONS = dict(solver=cvx.MOSEK, verbose=False) # Optimization solver options
-VERBOSE = True # Whether to print debug info to terminal
+VERBOSE = False # Whether to print debug info to terminal
 #SOLVER_OPTIONS = dict(solver=cvx.GUROBI, verbose=False, Threads=1)
 #SOLVER_OPTIONS = dict(solver=cvx.ECOS_BB, verbose=False)
 COMM = MPI.COMM_WORLD # MPI communicator among all processes
