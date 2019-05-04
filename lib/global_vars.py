@@ -11,7 +11,7 @@ import os
 import cvxpy as cvx
 from mpi4py import MPI
 
-EXAMPLE = 'cwh_xy' # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
+EXAMPLE = 'cwh_z' # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
 ABS_FRAC = 0.25 # Fraction of full set for computing partition absolute error tolerance
 REL_ERR = 1.0 # Partition relative error tolerance
 SOLVER_OPTIONS = dict(solver=cvx.MOSEK, verbose=False) # Optimization solver options
@@ -32,4 +32,5 @@ STATUS_FILE = PROJECT_DIR+'/status.txt' # Overall program status (text file)
 DATA_DIR = PROJECT_DIR+'/data/' # Directory where all data files are stored
 STATISTICS_FILE = DATA_DIR+'statistics.pkl' # Overall statistics
 TREE_FILE = DATA_DIR+'tree.pkl' # Overall tree
+ETA_RLS_FILE = DATA_DIR+'rls.pkl' # Overall tree
 BRANCHES_FILE = DATA_DIR+'branches.pkl' # Tree branches, used for tree building

@@ -61,35 +61,26 @@ class Oracle:
                                                                  delta_sum_constraint=True if i==0 else False)
         self.feasibility_in_simplex = cvx.Problem(self.mpc.cost,feasibility_constraints)
         
-        # Make bar_E_a^R, the convex absolute error over-approximator
-        self.vertex_costs = cvx.Parameter(self.mpc.n_x+1)
+        # Make problems that allow verifying simplex-is-in-variability-ball
+        # variables
         self.alpha = cvx.Variable(self.mpc.n_x+1,nonneg=True)
         self.theta_in_simplex = sum([self.alpha[i]*self.vertices[i] for i in range(self.mpc.n_x+1)])
-        constraints = self.mpc.make_constraints(self.theta_in_simplex,self.mpc.x,self.mpc.u,self.mpc.delta)
-        # theta stays in simplex
+        # problems
         in_simplex = [sum(self.alpha)==1]
-        constraints += in_simplex
-        # cost using affine over-approximator for reference commutation
-        self.bar_V = sum([self.alpha[i]*self.vertex_costs[i] for i in range(self.mpc.n_x+1)])
-        cost_abs_err = cvx.Minimize(self.mpc.V-self.bar_V)
-        self.abs_err_overapprox = cvx.Problem(cost_abs_err,constraints)
-        
-        # Make denominator of bar_E_r^R, which is P_theta restricted to
-        # commutation not being equal to a reference commutation and minimum
-        # found over a full simplex
-        self.rel_err_denom = cvx.Problem(self.mpc.cost,constraints)
-        
-        # Make problems that allow verifying simplex-is-in-variability-ball
         constraints = self.mpc.make_constraints(self.theta_in_simplex,self.mpc.x,self.mpc.u,self.delta_fixed)+in_simplex
         self.min_over_simplex_for_this_delta = cvx.Problem(self.mpc.cost,constraints)
         constraints = self.mpc.make_constraints(self.theta_in_simplex,self.mpc.x,self.mpc.u,self.mpc.delta)+in_simplex
         self.min_over_simplex_for_any_delta = cvx.Problem(self.mpc.cost,constraints)
         
         # Make D_delta^R, the MINLP that searches for a more optimal commutation
+        # variables
         self.epsilon = cvx.Parameter()
+        self.vertex_costs = cvx.Parameter(self.mpc.n_x+1)
+        self.bar_V = sum([self.alpha[i]*self.vertex_costs[i] for i in range(self.mpc.n_x+1)])
+        # constraints
         self.D_delta_R_constraints = self.mpc.make_constraints(self.theta_in_simplex,self.mpc.x,self.mpc.u,self.mpc.delta)+in_simplex
         self.D_delta_R_constraints += [self.bar_V-self.epsilon >= self.mpc.V]
-        self.D_delta_R_constraints += feasibility_constraints # commutation has to be feasible everywhere in R
+        #self.D_delta_R_constraints += feasibility_constraints # commutation has to be feasible everywhere in R
 
     def P_theta(self,theta,check_feasibility=False):
         """
@@ -182,40 +173,6 @@ class Oracle:
         delta_feas = self.mpc.delta.value
         return delta_feas
     
-    def bar_E_ar_R(self,R,V_delta_R,delta_ref):
-        """
-        Absolute and relative error over-approximations using affine
-        over-approximator of cost V_delta^*.
-        
-        Parameters
-        ----------
-        R : np.array
-            2D array whose rows are simplex vertices (length self.mpc.n_x+1).
-        V_delta_R : np.array
-            Array of cost at corresponding vertex in R.
-        delta_ref : np.array
-            Reference "baseline" commutation against which suboptimality is to
-            be checked (i.e. the one whose cost is being over-approximated).
-            
-        Returns
-        -------
-        bar_e_a_R : float
-            Over-approximated absolute error.
-        bar_e_r_R : float
-            Over-approximated relative error.
-        """
-        for k in range(self.mpc.n_x+1):
-            self.vertices[k].value = R[k]
-        self.vertex_costs.value = V_delta_R
-        self.abs_err_overapprox.solve(**global_vars.SOLVER_OPTIONS)
-        bar_e_a_R = -self.abs_err_overapprox.value
-        if np.isinf(bar_e_a_R):
-            bar_e_r_R = np.inf
-        else:
-            self.rel_err_denom.solve(**global_vars.SOLVER_OPTIONS)
-            bar_e_r_R = bar_e_a_R/self.rel_err_denom.value if self.rel_err_denom.value>0 else np.inf
-        return bar_e_a_R, bar_e_r_R
-
     def in_variability_ball(self,R,V_delta_R,delta_ref):
         """
         Check if variation of V_delta^* over simplex R is small enough (within
@@ -275,15 +232,9 @@ class Oracle:
         # commutations that delta should not equal, in case D_delta^R comes up
         # with deltas for which P_theta_delta is infeasible at the vertices of
         # R (due to numerical issues - mathematically this should not happen)
-        delta_neq_refs = []
+        delta_neq_other_deltas = []
         while True:
-            delta_offset = cvx.Variable(self.mpc.Nu*self.mpc.N, boolean=True)
-            delta_neq_refs += [self.mpc.delta[self.mpc.Nu*k+i] == delta_ref[self.mpc.Nu*k+i]+
-                               (1-2*delta_ref[self.mpc.Nu*k+i])*delta_offset[self.mpc.Nu*k+i]
-                               for k in range(self.mpc.N) for i in range(self.mpc.Nu)]
-            delta_neq_refs += [sum([delta_offset[self.mpc.Nu*k+i] for k in range(self.mpc.N)
-                               for i in range(self.mpc.Nu)]) >= 1]
-            find_more_optimal_commutation = cvx.Problem(cvx.Minimize(0),self.D_delta_R_constraints+delta_neq_refs)
+            find_more_optimal_commutation = cvx.Problem(cvx.Minimize(0),self.D_delta_R_constraints+delta_neq_other_deltas)
             find_more_optimal_commutation.solve(**global_vars.SOLVER_OPTIONS)
             better_delta = self.mpc.delta.value
             if better_delta is None:
@@ -305,4 +256,9 @@ class Oracle:
             except:
                 # Not feasible at some vertex -> solver must have returned an infeasible solution
                 # for find_more_optimal_commutation (numerical troubles)
-                delta_ref = better_delta
+                delta_offset = cvx.Variable(self.mpc.Nu*self.mpc.N, boolean=True)
+                delta_neq_other_deltas += [self.mpc.delta[self.mpc.Nu*k+i] == better_delta[self.mpc.Nu*k+i]+
+                                           (1-2*better_delta[self.mpc.Nu*k+i])*delta_offset[self.mpc.Nu*k+i]
+                                           for k in range(self.mpc.N) for i in range(self.mpc.Nu)]
+                delta_neq_other_deltas += [sum([delta_offset[self.mpc.Nu*k+i] for k in range(self.mpc.N)
+                                           for i in range(self.mpc.Nu)]) >= 1]

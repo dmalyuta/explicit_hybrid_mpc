@@ -272,67 +272,44 @@ class Worker:
             vertex_costs_S_2[v_combo_idx[1]] = V_delta_v_mid
             return vertex_inputs_S_1,vertex_inputs_S_2,vertex_costs_S_1,vertex_costs_S_2
     
-        bar_e_a_R, bar_e_r_R = self.oracle.bar_E_ar_R(R=node.data.vertices,
-                                                      V_delta_R=node.data.vertex_costs,
-                                                      delta_ref=node.data.commutation)
-        infeasible = np.isinf(bar_e_a_R)
-        eps_suboptimal = bar_e_a_R<=self.oracle.eps_a or bar_e_r_R<=self.oracle.eps_r
-        if infeasible or eps_suboptimal:
+        delta_star,new_vertex_inputs_and_costs = self.oracle.D_delta_R(R=node.data.vertices,
+                                                                       V_delta_R=node.data.vertex_costs,
+                                                                       delta_ref=node.data.commutation)
+        D_delta_R_infeasible = delta_star is None
+        if D_delta_R_infeasible:
             # Close leaf
             node.data.is_epsilon_suboptimal = True
             node.data.timestamp = time.time()
             volume_closed = tools.simplex_volume(node.data.vertices)
             self.status_publisher.update(volume_filled_increment=volume_closed)
         else:
-            delta_star,new_vertex_inputs_and_costs = self.oracle.D_delta_R(R=node.data.vertices,
-                                                                           V_delta_R=node.data.vertex_costs,
-                                                                           delta_ref=node.data.commutation)
-            D_delta_R_feasible = delta_star is not None
-            if D_delta_R_feasible:
-                Nvx = node.data.vertices.shape[0]
-                new_vertex_costs = np.array([new_vertex_inputs_and_costs[i][1] for i
-                                             in range(Nvx)])
-                new_vertex_inputs = np.array([new_vertex_inputs_and_costs[i][0] for i
-                                              in range(Nvx)])
-                if self.oracle.in_variability_ball(R=node.data.vertices,
-                                                   V_delta_R=node.data.vertex_costs,
-                                                   delta_ref=node.data.commutation):
-                    node.data.commutation = delta_star
-                    node.data.vertex_costs = new_vertex_costs
-                    node.data.vertex_inputs = new_vertex_inputs
-                    self.lcss(node,location)
-                else:
-                    S_1,S_2,v_idx = tools.split_along_longest_edge(node.data.vertices)
-                    # Re-compute vertex costs
-                    v_mid = S_1[v_idx[0]]
-                    vertex_inputs_S_1,vertex_inputs_S_2,vertex_costs_S_1,vertex_costs_S_2 = update_vertex_costs(
-                            v_mid,v_idx,delta_star,new_vertex_inputs,new_vertex_costs)
-                    # Make children
-                    child_left = NodeData(vertices=S_1,commutation=delta_star,
-                                          vertex_costs=vertex_costs_S_1,
-                                          vertex_inputs=vertex_inputs_S_1)
-                    child_right = NodeData(vertices=S_2,commutation=delta_star,
-                                           vertex_costs=vertex_costs_S_2,
-                                           vertex_inputs=vertex_inputs_S_2)
-                    add(child_left,child_right)
+            Nvx = node.data.vertices.shape[0]
+            new_vertex_costs = np.array([new_vertex_inputs_and_costs[i][1] for i
+                                         in range(Nvx)])
+            new_vertex_inputs = np.array([new_vertex_inputs_and_costs[i][0] for i
+                                          in range(Nvx)])
+            if self.oracle.in_variability_ball(R=node.data.vertices,
+                                               V_delta_R=node.data.vertex_costs,
+                                               delta_ref=node.data.commutation):
+                node.data.commutation = delta_star
+                node.data.vertex_costs = new_vertex_costs
+                node.data.vertex_inputs = new_vertex_inputs
+                self.lcss(node,location)
             else:
                 S_1,S_2,v_idx = tools.split_along_longest_edge(node.data.vertices)
                 # Re-compute vertex costs
                 v_mid = S_1[v_idx[0]]
                 vertex_inputs_S_1,vertex_inputs_S_2,vertex_costs_S_1,vertex_costs_S_2 = update_vertex_costs(
-                            v_mid,v_idx,node.data.commutation,
-                            node.data.vertex_inputs,node.data.vertex_costs)
+                        v_mid,v_idx,delta_star,new_vertex_inputs,new_vertex_costs)
                 # Make children
-                child_left = NodeData(vertices=S_1,
-                                      commutation=node.data.commutation,
+                child_left = NodeData(vertices=S_1,commutation=delta_star,
                                       vertex_costs=vertex_costs_S_1,
                                       vertex_inputs=vertex_inputs_S_1)
-                child_right = NodeData(vertices=S_2,
-                                       commutation=node.data.commutation,
+                child_right = NodeData(vertices=S_2,commutation=delta_star,
                                        vertex_costs=vertex_costs_S_2,
                                        vertex_inputs=vertex_inputs_S_2)
                 add(child_left,child_right)
-    
+
     def spin(self):
         """
         A loop which waits (by passive blocking) for the roots of a new branch to

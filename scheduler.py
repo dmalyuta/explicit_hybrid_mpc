@@ -14,10 +14,82 @@ import os
 import time
 import glob
 import pickle
+import numpy as np
 
 import global_vars
 import tools
 from examples import example
+
+class ETACalculator:
+    """Calculates the ETA via recursive averaging with exponential forgetting."""
+    def __init__(self,call_period,time_constant,store_history=False):
+        """
+        Parameters
+        ----------
+        call_period : float
+            The period, in seconds, with which the ``update()`` method is going
+            to be called.
+        time_constant : float
+            The exponential forgetting time constant. Measurements older than
+            time_constant seconds are weighted with <=exp(-1)=0.368.
+        store_history : bool, optional
+            ``True`` to store RLS measurement history for debugging purposes.
+        """
+        self.lamda = call_period/time_constant # [1/s] 1/(time constant)
+        self.state = 'init' # {'init','recurse'}
+        self.sigma = 1. # Summer normalization term
+        self.estimated_rate = None # [%/s] Volume filling rate estimate
+        
+        self.store_history = store_history
+        if self.store_history:
+            open(global_vars.ETA_RLS_FILE,'w').close() # clear the storage file
+        
+    def eta(self,volume_filled):
+        """
+        Get the current ETA.
+        
+        Parameters
+        ----------
+        volume_filled : float
+            Fraction of total volume that is already partitioned.
+            
+        Returns
+        -------
+        eta : float
+            The ETA estimate in seconds.
+        """
+        if self.estimated_rate is None or self.estimated_rate==0.:
+            eta = None
+        else:
+            eta = (1-volume_filled)/self.estimated_rate
+        return eta
+        
+    def reset(self):
+        """Reset the estimator."""
+        self.state = 'init'
+        self.sigma = 1.
+        self.estimated_rate = None
+        
+    def update(self,measured_rate):
+        """
+        Updates the current estimated volume filling rate.
+        
+        Parameters
+        ----------
+        measured_rate : float
+            Volume filling rate [%/s] measurement.
+        """
+        if self.state=='init':
+            self.estimated_rate = measured_rate
+            self.state = 'recurse'
+        else:
+            self.sigma = 1+np.exp(-self.lamda)*self.sigma
+            phi = 1/self.sigma
+            self.estimated_rate = phi*measured_rate+(1-phi)*self.estimated_rate
+        # debugging
+        if self.store_history:
+            with open(global_vars.ETA_RLS_FILE,'ab') as f:
+                pickle.dump(dict(measurement=measured_rate,estimate=self.estimated_rate),f)
 
 class MainStatusPublisher:
     def __init__(self,total_volume,call_period,status_write_period,statistics_save_period):
@@ -39,15 +111,36 @@ class MainStatusPublisher:
         self.total_volume = total_volume
         self.time_start = None
         
+        # Computation of elapsed time
+        def time_elapsed():
+            """Returns time elapsed since first call to this function, in seconds."""
+            if self.time_start is None:
+                self.time_start = time.time()
+            return time.time()-self.time_start
+        
+        self.time_elapsed = time_elapsed
+        
         # Create blank status and statistics files
         open(global_vars.STATUS_FILE,'w').close()
         open(global_vars.STATISTICS_FILE,'w').close()
+        
+        # ETA calculator
+        self.eta_window_duration = 30. # [s] Duration of window for finite-differencing to estimate volume filling rate
+        eta_time_constant = 5*60. # [s] Time constant for ETA (more precisely - volume filling rate) estimation
+        self.eta_rls_update_counter = 0
+        self.eta_last_measurement = None # Memory variable for volume filling rate measurement via finite-differencing
+        self.eta_estimator = ETACalculator(call_period=self.eta_window_duration,time_constant=eta_time_constant)
         
         # Variables for controlling the writing frequency        
         self.status_write_counter = 0
         self.statistics_save_counter = 0
         self.status_write_freq = int(status_write_period/call_period)
         self.statistics_save_freq = int(statistics_save_period/call_period)
+        
+    def reset_eta(self):
+        """Resets memory variables estimation."""
+        self.eta_estimator.reset()
+        self.eta_last_measurement = None
     
     def update(self,proc_status,force=False):
         """
@@ -69,25 +162,39 @@ class MainStatusPublisher:
         write_status = (self.status_write_counter%self.status_write_freq)==0
         if write_status:
             self.status_write_counter = 0 # reset
-        if force or save_statistics or write_status:
-            # Compute overall status
+        # Update the ETA estimate
+        self.eta_rls_update_counter += 1
+        update_eta = (self.eta_rls_update_counter%self.eta_window_duration)==0
+        if force or save_statistics or write_status or update_eta:
             worker_idxs = list(range(len(global_vars.WORKER_PROCS)))
-            num_proc_active = sum([proc_status[i]['status']=='active' for i in worker_idxs if proc_status[i] is not None])
-            num_proc_failed = sum([proc_status[i]['status']=='failed' for i in worker_idxs if proc_status[i] is not None])
             volume_filled_total = sum([proc_status[i]['volume_filled_total'] for i in worker_idxs if proc_status[i] is not None])
             volume_filled_frac = volume_filled_total/self.total_volume
+        if update_eta:
+            self.eta_rls_update_counter = 0 # reset
+            # Measure the volume filling rate via finite-differencing
+            first_call = self.eta_last_measurement is None
+            new_measurement = dict(t=self.time_elapsed(),v=volume_filled_frac)
+            if not first_call:
+                rate_measurement = (new_measurement['v']-self.eta_last_measurement['v'])/(new_measurement['t']-self.eta_last_measurement['t'])
+                self.eta_estimator.update(rate_measurement)
+            self.eta_last_measurement = new_measurement
+        # Do the updates, if any
+        if force or save_statistics or write_status:
+            # Compute overall status
+            num_proc_active = sum([proc_status[i]['status']=='active' for i in worker_idxs if proc_status[i] is not None])
+            num_proc_failed = sum([proc_status[i]['status']=='failed' for i in worker_idxs if proc_status[i] is not None])
             simplex_count_total = sum([proc_status[i]['simplex_count_total'] for i in worker_idxs if proc_status[i] is not None])
             time_active_total = sum([proc_status[i]['time_active_total'] for i in worker_idxs if proc_status[i] is not None])
-            if self.time_start is None:
-                self.time_start = time.time()
-            time_elapsed = time.time()-self.time_start
+            time_elapsed = self.time_elapsed()
+            eta = self.eta_estimator.eta(volume_filled_frac)
             overall_status = dict(num_proc_active=num_proc_active,
                                   num_proc_failed=num_proc_failed,
                                   volume_filled_total=volume_filled_total,
                                   volume_filled_frac=volume_filled_frac,
                                   simplex_count_total=simplex_count_total,
                                   time_elapsed=time_elapsed,
-                                  time_active_total=time_active_total)
+                                  time_active_total=time_active_total,
+                                  eta=eta)
             # Save statistics
             if force or save_statistics:
                 with open(global_vars.STATISTICS_FILE,'ab') as f:
@@ -102,7 +209,8 @@ class MainStatusPublisher:
                             'volume filled (total [%%]): %.4e'%(volume_filled_frac*100.),
                             'simplex_count: %d'%(simplex_count_total),
                             'time elapsed [s]: %d'%(time_elapsed),
-                            'time active (total for all processes [s]): %.0f'%(time_active_total)
+                            'time active (total for all processes [s]): %.0f'%(time_active_total),
+                            'ETA [s]: %s'%(str(eta if eta is None else int(eta)))
                             ])+'\n\n')
                     for i in worker_idxs:
                         data = proc_status[i]
@@ -258,6 +366,7 @@ class Scheduler:
             # Check termination criterion
             if not any(worker_active) and len(self.task_queue)==0:
                 self.status_publisher.update(worker_proc_status,force=True)
+                self.status_publisher.reset_eta()
                 return
 
 def save_leaves_into_queue(cursor,algorithm,queue,__location=''):
