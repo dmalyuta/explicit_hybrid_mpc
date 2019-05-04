@@ -3,7 +3,7 @@ __pycache__/
 sandbox/
 data/*
 status.txt
-mutex
+slurm-*.out
 /**/*.pyc
 /figures/*
 !/**/.gitkeep

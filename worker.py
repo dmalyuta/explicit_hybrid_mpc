@@ -322,6 +322,7 @@ class Worker:
             # Block until new data is received from scheduler
             tools.debug_print('waiting for data')
             data = global_vars.COMM.recv(source=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_WORK_TAG)
+            tools.debug_print('received data {}'.format(data))
             if data['action']=='stop':
                 # Request from scheduler to stop
                 return

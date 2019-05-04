@@ -332,8 +332,8 @@ class Scheduler:
                     if not worker_active[i]:
                         # Dispatch task to worker process worker_proc_num
                         task = self.task_queue.pop()
-                        tools.debug_print('dispatching task to worker %d (%d tasks left)'%(get_worker_proc_num(i),len(self.task_queue)))
-                        global_vars.COMM.isend(task,dest=get_worker_proc_num(i),tag=global_vars.NEW_WORK_TAG)
+                        tools.debug_print(('dispatching task to worker %d (%d tasks left), data {}'%(get_worker_proc_num(i),len(self.task_queue))).format(task))
+                        global_vars.COMM.send(task,dest=get_worker_proc_num(i),tag=global_vars.NEW_WORK_TAG)
                         worker2task[str(i)] = task
                         worker_active[i] = True
                     if len(self.task_queue)==0:

@@ -11,7 +11,7 @@
 # ikt or mox (ikt: 16 CPUs/node, 60 GB RAM/node; mox: 28 CPU/node, 120 GB RAM/node)
 
 ## edit -- nodes: number of nodes to use, tasks: nodes * cores per node 
-#SBATCH --nodes=1 --ntasks-per-node=1
+#SBATCH --nodes=1 --ntasks-per-node=20
 
 # Module loading
 module load icc_17-impi_2017 # Intel MPI
