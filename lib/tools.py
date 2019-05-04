@@ -27,15 +27,17 @@ class NonblockingMPIMessageReceiver:
             Rank of message source process.
         tag : int
             Message tag.
-        buffer : bytearray, optional
-            Desired MPI message buffer size, e.g. ``bytearray(1<<20)`` gives
-            1 MB buffer. See issue at ``https://tinyurl.com/y5craot6``.
+        buffer : int, optional
+            Upper bound to the number of bytes of the incoming pickled message.
+            E.g. ``bytearray(1<<20)`` means that the message is at most 1 MB in
+            size. See ``https://tinyurl.com/y5craot6`` and
+            ``https://tinyurl.com/yy42wrpm``.
         """
         def update_receiver():
             if buffer is not None:
-                self.req = global_vars.COMM.irecv(source=source,tag=tag)
-            else:
                 self.req = global_vars.COMM.irecv(buffer,source=source,tag=tag)
+            else:
+                self.req = global_vars.COMM.irecv(source=source,tag=tag)
             
         self.update_receiver = update_receiver
         self.update_receiver()

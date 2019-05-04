@@ -11,7 +11,7 @@ import os
 import cvxpy as cvx
 from mpi4py import MPI
 
-EXAMPLE = 'cwh_z' # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
+EXAMPLE = 'cwh_xy' # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
 ABS_FRAC = 0.25 # Fraction of full set for computing partition absolute error tolerance
 REL_ERR = 1.0 # Partition relative error tolerance
 SOLVER_OPTIONS = dict(solver=cvx.MOSEK, verbose=False) # Optimization solver options
@@ -29,6 +29,7 @@ SCHEDULER_PROC = 0 # MPI rank of scheduler process
 WORKER_PROCS = [i for i in range(N_PROC) if i!=SCHEDULER_PROC] # MPI ranks of worker processes
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),os.pardir))
 STATUS_FILE = PROJECT_DIR+'/status.txt' # Overall program status (text file)
-STATISTICS_FILE = PROJECT_DIR+'/data/statistics.pkl' # Overall statistics
-TREE_FILE = PROJECT_DIR+'/data/tree.pkl' # Overall tree
-BRANCHES_FILE = PROJECT_DIR+'/data/branches.pkl' # Tree branches, used for tree building
+DATA_DIR = PROJECT_DIR+'/data/' # Directory where all data files are stored
+STATISTICS_FILE = DATA_DIR+'statistics.pkl' # Overall statistics
+TREE_FILE = DATA_DIR+'tree.pkl' # Overall tree
+BRANCHES_FILE = DATA_DIR+'branches.pkl' # Tree branches, used for tree building

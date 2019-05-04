@@ -10,7 +10,9 @@ Copyright 2019 University of Washington. All rights reserved.
 import sys
 sys.path.append('./lib/')
 
+import os
 import time
+import glob
 import pickle
 
 import global_vars
@@ -162,13 +164,15 @@ class Scheduler:
                                                     status_write_period=self.status_write_period,
                                                     statistics_save_period=self.statistics_save_period)
         # MPI communication requests setup
-        buf = bytearray(1<<20) # 1 MB buffer, make it larger if needed. 
         self.task_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.NEW_BRANCH_TAG)
                          for worker_proc_num in global_vars.WORKER_PROCS]
-        self.completed_work_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.FINISHED_BRANCH_TAG,buffer=buf)
+        self.completed_work_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.FINISHED_BRANCH_TAG)
                                    for worker_proc_num in global_vars.WORKER_PROCS]
         self.status_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.STATUS_TAG)
                            for worker_proc_num in global_vars.WORKER_PROCS]
+        # Clean up the data directory
+        for file in glob.glob(global_vars.DATA_DIR+'branch_*.pkl'):
+            os.remove(file)
         # Wait for all slaves to setup
         global_vars.COMM.Barrier() 
         
@@ -190,10 +194,18 @@ class Scheduler:
         Manages worker processes until the partitioning process is finished,
         then shuts the processes down and exits.
         """
+        def publish_idle_count():
+            """Communicate to worker processes how many workers are idle."""
+            num_workers_idle = N_workers-sum(worker_active)
+            tools.debug_print('telling all workers that idle worker count = %d'%(num_workers_idle))
+            for worker_proc_num in global_vars.WORKER_PROCS:
+                global_vars.COMM.isend(num_workers_idle,dest=worker_proc_num,tag=global_vars.IDLE_WORKER_COUNT_TAG)
+                
         N_workers = len(global_vars.WORKER_PROCS)
         worker_active = [False]*N_workers
         worker_proc_status = [None]*N_workers
         worker_idxs = list(range(N_workers))
+        worker2task = dict.fromkeys(worker_idxs)
         get_worker_proc_num = lambda i: global_vars.WORKER_PROCS[i]
         while True:
             time.sleep(self.call_period)
@@ -204,31 +216,37 @@ class Scheduler:
                     tools.debug_print('received %d new tasks from worker %d'%(len(tasks),get_worker_proc_num(i)))
                     self.task_queue.extend(tasks)
             # Dispatch tasks to idle workers
-            tools.debug_print('there are %d tasks and %d workers are idle'%(len(self.task_queue),N_workers-sum(worker_active)))
             if len(self.task_queue)>0 and not all(worker_active):
                 for i in worker_idxs:
                     if not worker_active[i]:
                         # Dispatch task to worker process worker_proc_num
-                        tools.debug_print('dispatching task to worker %d'%(get_worker_proc_num(i)))
                         task = self.task_queue.pop()
+                        tools.debug_print('dispatching task to worker %d (%d tasks left)'%(get_worker_proc_num(i),len(self.task_queue)))
                         global_vars.COMM.isend(task,dest=get_worker_proc_num(i),tag=global_vars.NEW_WORK_TAG)
+                        worker2task[str(i)] = task
                         worker_active[i] = True
                     if len(self.task_queue)==0:
                         break # no more tasks to dispatch
-            # Communicate to worker processes how many workers are idle
-            num_workers_idle = N_workers-sum(worker_active)
-            for worker_proc_num in global_vars.WORKER_PROCS:
-                tools.debug_print('telling worker %d that idle worker count = %d'%(worker_proc_num,num_workers_idle))
-                global_vars.COMM.isend(num_workers_idle,dest=worker_proc_num,tag=global_vars.IDLE_WORKER_COUNT_TAG)
+                publish_idle_count()
             # Collect completed work from workers
+            some_tasks_completed = False
             for i in worker_idxs:
                 #NB: there's just one message that should ever be in the buffer
                 finished_task = self.completed_work_msg[i].receive()
                 if finished_task is not None:
                     tools.debug_print('received finished branch from worker %d'%(get_worker_proc_num(i)))
+                    location = worker2task[str(i)]['location']
+                    task_filename = global_vars.DATA_DIR+'branch_%s.pkl'%(location)
+                    with open(task_filename,'rb') as f:
+                        finished_branch = pickle.load(f)
+                        os.remove(task_filename)
                     with open(global_vars.BRANCHES_FILE,'ab') as f:
-                        pickle.dump(finished_task,f)
+                        pickle.dump(finished_branch,f)
+                    worker2task[str(i)] = None
                     worker_active[i] = False
+                    some_tasks_completed = True
+            if some_tasks_completed:
+                publish_idle_count()
             # Update status file
             for i in worker_idxs:
                 status = self.status_msg[i].receive('newest')
@@ -314,10 +332,10 @@ def build_tree():
     with open(global_vars.TREE_FILE,'wb') as f:
         pickle.dump(tree,f)
     return tree
-     
+
 def main():
     """Runs the scheduler process."""
-    scheduler = Scheduler(update_freq=100.,status_write_freq=10.,statistics_save_freq=20.)
+    scheduler = Scheduler(update_freq=20.,status_write_freq=1.,statistics_save_freq=0.2)
     # Run ECC: create feasible partition
     scheduler.spin()
     tree = build_tree()
@@ -327,17 +345,3 @@ def main():
     scheduler.spin()
     build_tree()
     scheduler.tell_workers('stop')
-
-
-# =============================================================================
-# if __name__=='__main__':
-#     setup()
-#     status_writer = MainStatusPublisher()
-#     for alg in ['ecc','lcss']:
-#         proc = start_processes(alg)
-#         await_termination(proc,status_writer,check_period=5.)
-#         tree = save_tree()
-#         if alg=='ecc':
-#             save_leaves_into_queue(tree)
-#     status_writer.save_statistics()
-# =============================================================================

@@ -11,6 +11,7 @@ import sys
 sys.path.append('./lib/')
 
 import time
+import pickle
 import numpy as np
 
 import global_vars
@@ -274,12 +275,6 @@ class Worker:
             node.data.timestamp = time.time()
             volume_closed = tools.simplex_volume(node.data.vertices)
             self.status_publisher.update(volume_filled_increment=volume_closed)
-# =============================================================================
-#             tools.debug_print('vertices = {}'.format(node.data.vertices))
-#             tools.debug_print('commutation = {}'.format(node.data.commutation))
-#             tools.debug_print('vertex_costs = {}'.format(node.data.vertex_costs))
-#             tools.debug_print('vertex_inputs = {}'.format(node.data.vertex_inputs))
-# =============================================================================
         else:
             delta_star,new_vertex_inputs_and_costs = self.oracle.D_delta_R(R=node.data.vertices,
                                                                            V_delta_R=node.data.vertex_costs,
@@ -362,8 +357,10 @@ class Worker:
                 except:
                     self.status_publisher.update(failed=True)
                     raise
-                # Send completed branch back to scheduler
-                global_vars.COMM.send(data,dest=global_vars.SCHEDULER_PROC,tag=global_vars.FINISHED_BRANCH_TAG)
+                # Save completed branch and notify scheduler that it is available
+                with open(global_vars.DATA_DIR+'branch_%s.pkl'%(data['location']),'wb') as f:
+                    pickle.dump(data,f)
+                global_vars.COMM.send(1,dest=global_vars.SCHEDULER_PROC,tag=global_vars.FINISHED_BRANCH_TAG)
                 self.status_publisher.update(active=False)
 
 def main():

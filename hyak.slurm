@@ -2,8 +2,8 @@
 #SBATCH --job-name=cwh_xy_N_4_abs_0_25_rel_1_0
 #SBATCH --account=stf
 #SBATCH --partition=stf
-#SBATCH --time=40:00:00
-#SBATCH --mem=60G
+#SBATCH --time=100:00:00
+#SBATCH --mem=100G
 #SBATCH --workdir=/gscratch/stf/danylo/explicit_hybrid_mpc
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=danylo@uw.edu
