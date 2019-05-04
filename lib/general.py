@@ -7,8 +7,6 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2018 University of Washington. All rights reserved.
 """
 
-import progressbar
-
 INFO  = ">>> "
 WARN  = "??? "
 ERROR = "!!! "
@@ -46,24 +44,6 @@ def warning(message):
         Message to print.
     """
     print(WARN+message)
-
-def makeWidgets(description):
-    """
-    Make widgets list for progressbar.
-    
-    Parameters
-    ----------
-    description : str
-        Goes in front, e.g. <descrption> ...
-  
-    Returns
-    -------
-    widgets : list
-        Widgets for progressbar.
-    """
-    widgets=['<%s> '%(description),progressbar.Percentage(),' ',
-             progressbar.Bar(),' (',progressbar.ETA(),')']
-    return widgets
 
 def fullrange(a,b=None):
     """

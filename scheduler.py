@@ -125,15 +125,16 @@ class MainStatusPublisher:
         open(global_vars.STATISTICS_FILE,'w').close()
         
         # ETA calculator
-        self.eta_window_duration = 30. # [s] Duration of window for finite-differencing to estimate volume filling rate
+        eta_window_duration = 30. # [s] Duration of window for finite-differencing to estimate volume filling rate
         eta_time_constant = 5*60. # [s] Time constant for ETA (more precisely - volume filling rate) estimation
-        self.eta_rls_update_counter = 0
         self.eta_last_measurement = None # Memory variable for volume filling rate measurement via finite-differencing
-        self.eta_estimator = ETACalculator(call_period=self.eta_window_duration,time_constant=eta_time_constant)
+        self.eta_estimator = ETACalculator(call_period=eta_window_duration,time_constant=eta_time_constant)
         
         # Variables for controlling the writing frequency        
+        self.eta_rls_update_counter = 0
         self.status_write_counter = 0
         self.statistics_save_counter = 0
+        self.eta_estimate_freq = int(eta_window_duration/call_period)
         self.status_write_freq = int(status_write_period/call_period)
         self.statistics_save_freq = int(statistics_save_period/call_period)
         
@@ -164,7 +165,7 @@ class MainStatusPublisher:
             self.status_write_counter = 0 # reset
         # Update the ETA estimate
         self.eta_rls_update_counter += 1
-        update_eta = (self.eta_rls_update_counter%self.eta_window_duration)==0
+        update_eta = (self.eta_rls_update_counter%self.eta_estimate_freq)==0
         if force or save_statistics or write_status or update_eta:
             worker_idxs = list(range(len(global_vars.WORKER_PROCS)))
             volume_filled_total = sum([proc_status[i]['volume_filled_total'] for i in worker_idxs if proc_status[i] is not None])
