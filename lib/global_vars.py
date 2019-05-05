@@ -11,9 +11,20 @@ import os
 import cvxpy as cvx
 from mpi4py import MPI
 
-EXAMPLE = 'cwh_xy' # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
-ABS_FRAC = 0.1 # Fraction of full set for computing partition absolute error tolerance
-REL_ERR = 0.1 # Partition relative error tolerance
+# MPC problem parameters (**set via command line arguments**)
+EXAMPLE = None # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
+MPC_HORIZON = None # MPC prediction horizon length
+ABS_FRAC = None # Fraction of full set for computing partition absolute error tolerance
+REL_ERR = None # Partition relative error tolerance
+RUNTIME_DIR = None # Runtime directory (contains files to run the code and the data generated)
+DATA_DIR = None # Directory for files generated at runtime
+STATUS_FILE = None # Overall program status (text file)
+STATISTICS_FILE = None # Overall statistics
+TREE_FILE = None # Overall tree
+ETA_RLS_FILE = None # Overall tree
+BRANCHES_FILE = None # Tree branches, used for tree building
+IDLE_COUNT_FILE = None # Idle process count
+
 SOLVER_OPTIONS = dict(solver=cvx.MOSEK, verbose=False) # Optimization solver options
 VERBOSE = False # Whether to print debug info to terminal
 #SOLVER_OPTIONS = dict(solver=cvx.GUROBI, verbose=False, Threads=1)
@@ -26,12 +37,5 @@ NEW_BRANCH_TAG = 33 # MPI Isend tag for new branch root to put into queue
 FINISHED_BRANCH_TAG = 44 # MPI Isend tag for finished branch
 SCHEDULER_PROC = 0 # MPI rank of scheduler process
 WORKER_PROCS = [i for i in range(N_PROC) if i!=SCHEDULER_PROC] # MPI ranks of worker processes
-PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),os.pardir))
-STATUS_FILE = PROJECT_DIR+'/status.txt' # Overall program status (text file)
-DATA_DIR = PROJECT_DIR+'/data/' # Directory where all data files are stored
-STATISTICS_FILE = DATA_DIR+'statistics.pkl' # Overall statistics
-TREE_FILE = DATA_DIR+'tree.pkl' # Overall tree
-ETA_RLS_FILE = DATA_DIR+'rls.pkl' # Overall tree
-BRANCHES_FILE = DATA_DIR+'branches.pkl' # Tree branches, used for tree building
-IDLE_COUNT_FILE = DATA_DIR+'idle_count.pkl' # Idle process count
 ERROR = '>>> ' # Error message prefix
+PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),os.pardir)) # Project root directory

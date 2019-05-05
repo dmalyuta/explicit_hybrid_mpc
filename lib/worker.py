@@ -7,9 +7,6 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
-import sys
-sys.path.append('./lib/')
-
 import time
 import pickle
 import numpy as np
@@ -23,6 +20,7 @@ class WorkerStatusPublisher:
     def __init__(self):
         self.data = dict(status='idle', # {'active','idle'}
                          current_branch='', # Location in tree of current subtree's root
+                         current_location='', # Location in tree
                          algorithm='', # Which algorithm is being used (ecc or lcss)
                          volume_filled_total=0., # [-] Absolute units
                          volume_filled_current=0., # [%] of current root simplex's volume
@@ -30,7 +28,9 @@ class WorkerStatusPublisher:
                          simplex_count_current=0, # [-] How many simplices generated for current root simplex partition
                          time_active_total=0., # [s] Total time spent in 'active' status
                          time_active_current=0., # [s] Total time spent doing partitioning for the current simplex
-                         time_idle=0.) # [s] Total time spend in 'idle' status
+                         time_idle=0., # [s] Total time spend in 'idle' status
+                         time_ecc=0., # [s] Total time spent processing ECC algorithm tasks
+                         time_lcss=0.) # [s] Total time spent processing L-CSS algorithm tasks
         self.time_previous = time.time() # [s] Timestamp when time was last updated
         self.volume_current = None # [-] Volume of current root simplex
         self.req = None # Non-blocking MPI Request object (once the first request is made)
@@ -46,7 +46,7 @@ class WorkerStatusPublisher:
         """Resets the ``volume_filled_total``."""
         self.data['volume_filled_total'] = 0.
     
-    def set_new_root_simplex(self,R,location):
+    def set_new_root_simplex(self,R,location,algorithm):
         """
         Set the new root simplex. Resets the ``*_current`` data fields.
         
@@ -57,15 +57,18 @@ class WorkerStatusPublisher:
         location : string
             Location of this simplex in overall tree ('0' and '1' format where
             '0' means take left, '1' means take right starting from root node).
+        algorithm : {'ecc','lcss'}
+            Which algorithm is to be run for the partitioning.
         """
         self.volume_current = tools.simplex_volume(R)
         self.data['current_branch'] = location
         self.data['volume_filled_current'] = 0.
         self.data['simplex_count_current'] = 1
         self.data['time_active_current'] = 0.
+        self.data['algorithm'] = algorithm
         self.__write()
     
-    def update(self,active=None,failed=False,algorithm=None,volume_filled_increment=None,simplex_count_increment=None):
+    def update(self,active=None,failed=False,volume_filled_increment=None,simplex_count_increment=None,location=None):
         """
         Update the data.
         
@@ -75,31 +78,31 @@ class WorkerStatusPublisher:
             ``True`` if the process is in the 'active' state.
         failed : bool, optional
             ``True`` if algorithm failed (worker process shutdown)
-        algorithm : {'ecc','lcss'}, optional
-            Which algorithm is being executed?
         volume_filled_increment : float, optional
             Volume of closed lead.
         simplex_count_increment : int, optional
             How many additional simplices added to partition.
+        location : str, optional
+            Current location in the tree.
         """
         # Update time counters
-        time_now = time.time()
-        dt = time_now-self.time_previous
-        self.time_previous = time_now
+        dt = time.time()-self.time_previous
+        self.time_previous += dt
         if self.data['status']=='active':
             self.data['time_active_total'] += dt
             self.data['time_active_current'] += dt
         else:
             self.data['time_idle'] += dt
+        if self.data['algorithm']=='ecc':
+            self.data['time_ecc'] += dt
+        else:
+            self.data['time_lcss'] += dt
         # Update status
         if active is not None:
             self.data['status'] = 'active' if active else 'idle'
             tools.debug_print('sending status update, status = %s'%(self.data['status']))
         if failed is True:
             self.data['status'] = 'failed'
-        # Update algorithm
-        if algorithm is not None:
-            self.data['algorithm'] = algorithm
         # Update volume counters
         if volume_filled_increment is not None:
             self.data['volume_filled_total'] += volume_filled_increment
@@ -108,6 +111,9 @@ class WorkerStatusPublisher:
         if simplex_count_increment is not None:
             self.data['simplex_count_total'] += simplex_count_increment
             self.data['simplex_count_current'] += simplex_count_increment
+        # Update location
+        if location is not None:
+            self.data['current_location'] = location
         self.__write()
         
 class Worker:
@@ -179,6 +185,7 @@ class Worker:
             Location in tree of this node. String where '0' at index i means take
             left child, '1' at index i means take right child (at depth value i).
         """
+        self.status_publisher.update(location=location)
         tools.debug_print('ecc at location = %s'%(location))
         c_R = np.average(node.data.vertices,axis=0) # Simplex barycenter
         if not self.oracle.P_theta(theta=c_R,check_feasibility=True):
@@ -275,6 +282,7 @@ class Worker:
             vertex_costs_S_2[v_combo_idx[1]] = V_delta_v_mid
             return vertex_inputs_S_1,vertex_inputs_S_2,vertex_costs_S_1,vertex_costs_S_2
     
+        self.status_publisher.update(location=location)
         delta_star,new_vertex_inputs_and_costs = self.oracle.D_delta_R(R=node.data.vertices,
                                                                        V_delta_R=node.data.vertex_costs,
                                                                        delta_ref=node.data.commutation)
@@ -337,8 +345,8 @@ class Worker:
                 # Get data about the branch to be worked on
                 branch = data['branch_root']
                 branch_location = data['location']
-                self.status_publisher.set_new_root_simplex(branch.data.vertices,branch_location)
-                self.status_publisher.update(active=True,algorithm=data['action'])
+                self.status_publisher.set_new_root_simplex(branch.data.vertices,branch_location,data['action'])
+                self.status_publisher.update(active=True)
                 # Do work on this branch (i.e. partition this simplex)
                 try:
                     tools.debug_print('calling algorithm')
@@ -347,7 +355,7 @@ class Worker:
                     self.status_publisher.update(failed=True)
                     raise
                 # Save completed branch and notify scheduler that it is available
-                with open(global_vars.DATA_DIR+'branch_%s.pkl'%(data['location']),'wb') as f:
+                with open(global_vars.DATA_DIR+'/branch_%s.pkl'%(data['location']),'wb') as f:
                     pickle.dump(data,f)
                 global_vars.COMM.send(1,dest=global_vars.SCHEDULER_PROC,tag=global_vars.FINISHED_BRANCH_TAG)
                 self.status_publisher.update(active=False)

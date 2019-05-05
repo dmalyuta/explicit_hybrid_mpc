@@ -17,7 +17,7 @@ class Oracle:
     "Oracle" problems, i.e. the optimization programs that need to be called
     by the partitioning algorithm.
     """
-    def __init__(self,mpc,eps_a,eps_r,kind='semiexplicit'):
+    def __init__(self,mpc,eps_a,eps_r):
         """
         Pre-parses the oracle problems.
         
@@ -30,14 +30,10 @@ class Oracle:
         eps_r : float
             Relative error tolerance (>0 where 0 is fully tight, 1 is 100%
             relative error, etc.).
-        kind : {'semiexplicit','explicit'}
-            Supports partitioning for semi-explicit or explicit MPC
-            implementations.
         """
         self.mpc = mpc
         self.eps_a = eps_a
         self.eps_r = eps_r
-        self.kind = kind
         
         # Make P_theta, the original MINLP
         constraints = self.mpc.make_constraints(self.mpc.x0,self.mpc.x,self.mpc.u,self.mpc.delta)

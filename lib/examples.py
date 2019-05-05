@@ -7,9 +7,6 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
-import sys
-sys.path.append('./lib/')
-
 import numpy as np
 
 import global_vars
@@ -50,9 +47,9 @@ def satellite_xy_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     Theta = np.row_stack(Theta.V)
     # Create the optimization problem oracle
     if abs_err is None:
-        oracle = Oracle(sat,eps_a=1.,eps_r=1.,kind='explicit')
+        oracle = Oracle(sat,eps_a=1.,eps_r=1.)
         abs_err = np.max([oracle.P_theta(theta=vx)[2] for vx in [abs_frac*vx for vx in Theta]])
-    oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err,kind='explicit')
+    oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err)
     # Initial triangulation
     partition, number_init_simplices, vol = delaunay(Theta)
     return partition, oracle
@@ -87,9 +84,9 @@ def satellite_z_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     Theta = np.row_stack(Theta.V)
     # Create the optimization problem oracle
     if abs_err is None:
-        oracle = Oracle(sat,eps_a=1.,eps_r=1.,kind='explicit')
+        oracle = Oracle(sat,eps_a=1.,eps_r=1.)
         abs_err = np.max([oracle.P_theta(theta=vx)[2] for vx in [abs_frac*vx for vx in Theta]])
-    oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err,kind='explicit')
+    oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err)
     # Initial triangulation
     partition, number_init_simplices, vol = delaunay(Theta)
     return partition, oracle

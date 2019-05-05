@@ -1,9 +1,8 @@
-__pycache__/
 /**/gurobi.log
-sandbox/
-data/*
-status.txt
-slurm-*.out
+/**/slurm-*.out
 /**/*.pyc
-/figures/*
+__pycache__/
+sandbox/
+runtime/*
+figures/*
 !/**/.gitkeep

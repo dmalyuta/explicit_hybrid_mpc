@@ -7,8 +7,11 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import sys
+import time
 import math
 import itertools
+import argparse
 import numpy as np
 import numpy.linalg as la
 import scipy.linalg as sla
@@ -214,3 +217,105 @@ def fullrange(a,b=None):
         return range(1,a+1)
     else:
         return range(a,b+1)
+
+def parse_args(require_timestamp=False):
+    """
+    Parse the command-line arguments.
+    
+    Parameters
+    ----------
+    require_timestamp : bool, optional
+        ``True`` to require that a timestamp was passed in the command-line
+        arguments.
+    
+    Returns
+    -------
+    args : dict
+        Dictionary of passed command-line arguments.
+    """
+    # Parse the command-line arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-e','--example',action='store',dest='example',type=str,
+                        choices=['cwh_z','cwh_xy'],help='which MPC algorithm to run',required=True)
+    parser.add_argument('-N','--nodes',action='store',dest='nodes',type=int,
+                        help='number of nodes on which to run',required=True)
+    parser.add_argument('-n','--ntasks-per-node',action='store',dest='tasks_per_node',type=int,
+                        help='number of tasks to invoke on each node',required=True)
+    parser.add_argument('-p','--mpc-horizon',action='store',dest='N',type=int,
+                        help='MPC prediction horizon length',required=True)
+    parser.add_argument('-a','--abs',action='store',dest='abs_frac',type=float,
+                        help='fraction by which to shrink the invariant set for absolute'
+                        ' error computation for epsilon-suboptimality',required=True)
+    parser.add_argument('-r','--rel',dest='rel_err',type=float,
+                        help='relative error for epsilon-suboptimality',required=True)
+    parser.add_argument('-d','--job-duration',action='store',dest='job_duration',type=str,
+                        help='job time duration in HH:MM:SS format',required=True)
+    parser.add_argument('-t','--timestamp',action='store',dest='timestamp',type=str,
+                        help='runtime directory timestamp',required=False)
+    parser.add_argument('--runtime-dir',action='store',dest='runtime_dir',type=str,
+                        help='force-specify the runtime directory name',required=False)
+    parser.add_argument('--ecc-tree',action='store',dest='ecc_tree',type=str,
+                        help='absolute path to tree.pkl output by ECC algorithm',required=False)
+    args = vars(parser.parse_args())
+    if args['timestamp'] is None and args['runtime_dir'] is None and require_timestamp==True:
+        raise NameError('Need either --timestamp or --runtime-dir to be specified')
+    args['raw_cmdline_string'] = ' '.join(sys.argv[1:])
+    return args
+
+def make_runtime_dir_name(args):
+    """
+    Creates the runtime directory name.
+    
+    Parameters
+    ----------
+    args : dict
+        Dictionary of passed command-line arguments.
+        
+    Returns
+    -------
+    dirname : str
+        Runtime directory name.
+    timestamp : str
+        Directory timestamp.
+    """
+    timestamp = args['timestamp'] if args['timestamp'] is not None else time.strftime("%d%m%YT%H%M%S")
+    if args['runtime_dir'] is None:
+        dirname = 'runtime_%s_N_%d_abs_%s_rel_%s_nodes_%d_tpn_%d_%s'%(
+                args['example'],args['N'],str(args['abs_frac']).replace('.','_'),
+                str(args['rel_err']).replace('.','_'),args['nodes'],args['tasks_per_node'],timestamp)
+    else:
+        dirname = args['runtime_dir']
+    return dirname, timestamp
+
+def set_global_variables(require_timestamp=False):
+    """
+    Set the global variables to passed command-line arguments.
+    
+    Parameters
+    ----------
+    require_timestamp : bool, optional
+        ``True`` to require that a timestamp was passed in the command-line
+        arguments.
+        
+    Returns
+    -------
+    timestamp : str
+        Timestamp when the runtime directory was created.
+    """
+    args = parse_args(require_timestamp)
+    # Optimization oracle parameters
+    global_vars.EXAMPLE = args['example']
+    global_vars.MPC_HORIZON = args['N']
+    global_vars.ABS_FRAC = args['abs_frac']
+    global_vars.REL_ERR = args['rel_err']    
+    # Filenames
+    dirname, timestamp = make_runtime_dir_name(args)
+    global_vars.RUNTIME_DIR = global_vars.PROJECT_DIR+'/runtime/'+dirname
+    global_vars.DATA_DIR = global_vars.RUNTIME_DIR+'/data'
+    global_vars.STATUS_FILE = global_vars.DATA_DIR+'/status.txt' # Overall program status (text file)
+    global_vars.STATISTICS_FILE = global_vars.DATA_DIR+'/statistics.pkl' # Overall statistics
+    global_vars.TREE_FILE = global_vars.DATA_DIR+'/tree.pkl' # Overall tree
+    global_vars.ETA_RLS_FILE = global_vars.DATA_DIR+'/rls.pkl' # Overall tree
+    global_vars.BRANCHES_FILE = global_vars.DATA_DIR+'/branches.pkl' # Tree branches, used for tree building
+    global_vars.IDLE_COUNT_FILE = global_vars.DATA_DIR+'/idle_count.pkl' # Idle process count
+    return timestamp

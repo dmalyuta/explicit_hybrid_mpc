@@ -2,9 +2,6 @@
 Data post-processing.
 """
 
-import sys
-sys.path.append('./lib/')
-
 import pickle
 
 import global_vars

@@ -7,9 +7,6 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
-import sys
-sys.path.append('./lib/')
-
 import os
 import time
 import glob
@@ -109,16 +106,7 @@ class MainStatusPublisher:
             lists.
         """
         self.total_volume = total_volume
-        self.time_start = None
-        
-        # Computation of elapsed time
-        def time_elapsed():
-            """Returns time elapsed since first call to this function, in seconds."""
-            if self.time_start is None:
-                self.time_start = time.time()
-            return time.time()-self.time_start
-        
-        self.time_elapsed = time_elapsed
+        self.time = dict(previous=None,total=0.,ecc=0.,lcss=0.)
         
         # Create blank status and statistics files
         open(global_vars.STATUS_FILE,'w').close()
@@ -138,6 +126,23 @@ class MainStatusPublisher:
         self.status_write_freq = int(status_write_period/call_period)
         self.statistics_save_freq = int(statistics_save_period/call_period)
         
+    def update_time(self,algorithm=None):
+        """
+        Updates ``self.time``.
+        
+        Parameters
+        ----------
+        algorithm: {'ecc','lcss'}, optional
+            Which algorithm is being run.
+        """
+        if self.time['previous'] is None:
+            self.time['previous'] = time.time()
+        dt = time.time()-self.time['previous']
+        self.time['previous'] += dt
+        self.time['total'] += dt
+        if algorithm is not None:
+            self.time[algorithm] += dt
+    
     def reset_eta(self):
         """Resets memory variables estimation."""
         self.eta_estimator.reset()
@@ -151,12 +156,20 @@ class MainStatusPublisher:
         Parameters
         ----------
         proc_status : list
-            List of dicts of individual process statuses.
+            List of dicts of individual worker process statuses.
         num_tasks_in_queue : int
             Number of tasks in the queue.
         force : bool, optional
             ``True`` to force writing both the status and the statistics files.
         """
+        # Determine which algorithm is being executed
+        # All workers should be using the same algorithm, so get it from the
+        # lowest ID worker for which a status is already available
+        which_alg,i = '',0
+        while which_alg=='' and i<len(proc_status):
+            which_alg = proc_status[i]['algorithm']
+            i += 1
+        which_alg = None if which_alg=='' else which_alg
         # Determine if anything is to be done
         self.status_write_counter += 1
         self.statistics_save_counter += 1
@@ -177,7 +190,8 @@ class MainStatusPublisher:
             self.eta_rls_update_counter = 0 # reset
             # Measure the volume filling rate via finite-differencing
             first_call = self.eta_last_measurement is None
-            new_measurement = dict(t=self.time_elapsed(),v=volume_filled_frac)
+            self.update_time(which_alg)
+            new_measurement = dict(t=self.time['total'],v=volume_filled_frac)
             if not first_call:
                 rate_measurement = (new_measurement['v']-self.eta_last_measurement['v'])/(new_measurement['t']-self.eta_last_measurement['t'])
                 self.eta_estimator.update(rate_measurement)
@@ -189,7 +203,7 @@ class MainStatusPublisher:
             num_proc_failed = sum([proc_status[i]['status']=='failed' for i in worker_idxs if proc_status[i] is not None])
             simplex_count_total = sum([proc_status[i]['simplex_count_total'] for i in worker_idxs if proc_status[i] is not None])
             time_active_total = sum([proc_status[i]['time_active_total'] for i in worker_idxs if proc_status[i] is not None])
-            time_elapsed = self.time_elapsed()
+            self.update_time(which_alg)
             eta = self.eta_estimator.eta(volume_filled_frac)
             overall_status = dict(num_proc_active=num_proc_active,
                                   num_proc_failed=num_proc_failed,
@@ -197,7 +211,9 @@ class MainStatusPublisher:
                                   volume_filled_total=volume_filled_total,
                                   volume_filled_frac=volume_filled_frac,
                                   simplex_count_total=simplex_count_total,
-                                  time_elapsed=time_elapsed,
+                                  time_elapsed=self.time['total'],
+                                  time_ecc=self.time['ecc'],
+                                  time_lcss=self.time['lcss'],
                                   time_active_total=time_active_total,
                                   eta=eta)
             # Save statistics
@@ -214,8 +230,10 @@ class MainStatusPublisher:
                             'number of tasks queue: %d'%(num_tasks_in_queue),
                             'volume filled (total [%%]): %.4e'%(volume_filled_frac*100.),
                             'simplex_count: %d'%(simplex_count_total),
-                            'time elapsed [s]: %d'%(time_elapsed),
+                            'time elapsed [s]: %d'%(self.time['total']),
                             'time active (total for all processes [s]): %.0f'%(time_active_total),
+                            'time running ecc [s]: %d'%(self.time['ecc']),
+                            'time running lcss [s]: %d'%(self.time['lcss']),
                             'ETA [s]: %s'%(str(eta if eta is None else int(eta)))
                             ])+'\n\n')
                     for i in worker_idxs:
@@ -226,14 +244,17 @@ class MainStatusPublisher:
                                 '# proc %d'%(global_vars.WORKER_PROCS[i]),
                                 'status: %s'%(data['status']),
                                 'algorithm: %s'%(data['algorithm']),
-                                'current branch: %s'%(data['current_branch']),
+                                'current branch:   %s'%(data['current_branch']),
+                                'current location: %s'%(data['current_location']),
                                 'volume filled (total [-]): %.4e'%(data['volume_filled_total']),
                                 'volume filled (current [%%]): %.4e'%(data['volume_filled_current']*100.),
                                 'simplex count (total [-]): %d'%(data['simplex_count_total']),
                                 'simplex count (current [-]): %d'%(data['simplex_count_current']),
-                                'time active (total [s]): %.0f'%(data['time_active_total']),
-                                'time active (current [s]): %.0f'%(data['time_active_current']),
-                                'time idle (total [s]): %.0f'%(data['time_idle'])
+                                'time active (total [s]): %d'%(data['time_active_total']),
+                                'time active (current [s]): %d'%(data['time_active_current']),
+                                'time idle (total [s]): %d'%(data['time_idle']),
+                                'time running ecc (total [s]): %d'%(data['time_ecc']),
+                                'time running lcss (total [s]): %d'%(data['time_lcss'])
                                 ])+'\n\n')
 
 class Scheduler:
@@ -286,13 +307,17 @@ class Scheduler:
         self.status_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.STATUS_TAG)
                            for worker_proc_num in global_vars.WORKER_PROCS]
         # Clean up the data directory
-        for file in glob.glob(global_vars.DATA_DIR+'branch_*.pkl'):
+        for file in glob.glob(global_vars.DATA_DIR+'/branch_*.pkl'):
             os.remove(file)
         # Initialize idle worker count to all workers idle
         with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
             pickle.dump(len(global_vars.WORKER_PROCS),f)
         # Wait for all slaves to setup
         global_vars.COMM.Barrier() 
+        
+    def clear_queue(self):
+        """Remove tasks from queue."""
+        self.task_queue.clear()
         
     def tell_workers(self,action):
         """
@@ -364,7 +389,7 @@ class Scheduler:
                 if finished_task is not None:
                     tools.debug_print('received finished branch from worker %d'%(get_worker_proc_num(i)))
                     location = worker2task[str(i)]['location']
-                    task_filename = global_vars.DATA_DIR+'branch_%s.pkl'%(location)
+                    task_filename = global_vars.DATA_DIR+'/branch_%s.pkl'%(location)
                     with open(task_filename,'rb') as f:
                         finished_branch = pickle.load(f)
                         os.remove(task_filename)
@@ -462,13 +487,29 @@ def build_tree():
         pickle.dump(tree,f)
     return tree
 
-def main():
-    """Runs the scheduler process."""
+def main(ecc_tree=None):
+    """
+    Runs the scheduler process.
+    
+    Parameters
+    ----------
+    ecc_tree : str, optional
+        Absolute path to tree.pkl for a pre-computed tree by the ECC algorithm.
+    """
     scheduler = Scheduler(update_freq=20.,status_write_freq=1.,statistics_save_freq=0.2)
     # Run ECC: create feasible partition
-    scheduler.spin()
-    tree = build_tree()
-    scheduler.tell_workers('reset_volume')
+    if ecc_tree is None:
+        scheduler.spin()
+        tree = build_tree()
+        scheduler.tell_workers('reset_volume')
+        with open(global_vars.DATA_DIR+'/ecc_tree.pkl','wb') as f:
+            # backup the tree obtained from just running ECC
+            # (just a "feasible" partition)
+            pickle.dump(tree,f)
+    else:
+        with open(ecc_tree,'rb') as f:
+            tree = pickle.load(f)
+        scheduler.clear_queue()
     # Run L-CSS: create epsilon-suboptimal partition
     save_leaves_into_queue(tree,'lcss',scheduler.task_queue)
     scheduler.spin()
