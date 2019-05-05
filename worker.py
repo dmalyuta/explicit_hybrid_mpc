@@ -145,7 +145,13 @@ class Worker:
             Which algorithm is to be run for the partitioning.
         """
         with open(global_vars.IDLE_COUNT_FILE,'rb') as f:
-            idle_worker_count= pickle.load(f)
+            try:
+                idle_worker_count = pickle.load(f)
+            except EOFError:
+                # This may occur if the file is currently being written to by
+                # the scheduler. In this case, conservatively assume that there
+                # are no idle workers
+                idle_worker_count = 0
         tools.debug_print('idle worker count = %d'%(idle_worker_count))
         if idle_worker_count>0:
             new_task = dict(branch_root=child,location=location,action=which_alg)

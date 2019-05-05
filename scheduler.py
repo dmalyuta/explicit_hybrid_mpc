@@ -313,11 +313,17 @@ class Scheduler:
         then shuts the processes down and exits.
         """
         def publish_idle_count():
-            """Communicate to worker processes how many workers are idle."""
+            """
+            Communicate to worker processes how many more workers are idle than
+            there are tasks in the queue. If there are more workers idle then
+            there are tasks in the queue, we want currently active workers to
+            offload some of their work to these "slacking" workers.
+            """
             num_workers_idle = N_workers-sum(worker_active)
+            num_workers_with_no_work = max(num_workers_idle-len(self.task_queue),0)
             tools.debug_print('idle worker count = %d'%(num_workers_idle))
             with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
-                pickle.dump(num_workers_idle,f)
+                pickle.dump(num_workers_with_no_work,f)
                 
         N_workers = len(global_vars.WORKER_PROCS)
         worker_active = [False]*N_workers
