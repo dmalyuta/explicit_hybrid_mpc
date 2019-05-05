@@ -144,7 +144,7 @@ class MainStatusPublisher:
         self.eta_last_measurement = None
         self.eta_rls_update_counter = 0
     
-    def update(self,proc_status,force=False):
+    def update(self,proc_status,num_tasks_in_queue,force=False):
         """
         Write the main status file.
         
@@ -152,6 +152,8 @@ class MainStatusPublisher:
         ----------
         proc_status : list
             List of dicts of individual process statuses.
+        num_tasks_in_queue : int
+            Number of tasks in the queue.
         force : bool, optional
             ``True`` to force writing both the status and the statistics files.
         """
@@ -191,6 +193,7 @@ class MainStatusPublisher:
             eta = self.eta_estimator.eta(volume_filled_frac)
             overall_status = dict(num_proc_active=num_proc_active,
                                   num_proc_failed=num_proc_failed,
+                                  num_tasks_in_queue=num_tasks_in_queue,
                                   volume_filled_total=volume_filled_total,
                                   volume_filled_frac=volume_filled_frac,
                                   simplex_count_total=simplex_count_total,
@@ -208,6 +211,7 @@ class MainStatusPublisher:
                             '# overall',
                             'number of processes active: %d'%(num_proc_active),
                             'number of processes failed: %d'%(num_proc_failed),
+                            'number of tasks queue: %d'%(num_tasks_in_queue),
                             'volume filled (total [%%]): %.4e'%(volume_filled_frac*100.),
                             'simplex_count: %d'%(simplex_count_total),
                             'time elapsed [s]: %d'%(time_elapsed),
@@ -284,6 +288,9 @@ class Scheduler:
         # Clean up the data directory
         for file in glob.glob(global_vars.DATA_DIR+'branch_*.pkl'):
             os.remove(file)
+        # Initialize idle worker count to all workers idle
+        with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
+            pickle.dump(len(global_vars.WORKER_PROCS),f)
         # Wait for all slaves to setup
         global_vars.COMM.Barrier() 
         
@@ -308,9 +315,9 @@ class Scheduler:
         def publish_idle_count():
             """Communicate to worker processes how many workers are idle."""
             num_workers_idle = N_workers-sum(worker_active)
-            tools.debug_print('telling all workers that idle worker count = %d'%(num_workers_idle))
-            for worker_proc_num in global_vars.WORKER_PROCS:
-                global_vars.COMM.isend(num_workers_idle,dest=worker_proc_num,tag=global_vars.IDLE_WORKER_COUNT_TAG)
+            tools.debug_print('idle worker count = %d'%(num_workers_idle))
+            with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
+                pickle.dump(num_workers_idle,f)
                 
         N_workers = len(global_vars.WORKER_PROCS)
         worker_active = [False]*N_workers
@@ -342,7 +349,9 @@ class Scheduler:
                         worker_active[i] = True
                     if len(self.task_queue)==0:
                         break # no more tasks to dispatch
+                publish_idle_count()
             # Collect completed work from workers
+            any_tasks_completed = False
             for i in worker_idxs:
                 #NB: there's just one message that should ever be in the buffer
                 finished_task = self.completed_work_msg[i].receive()
@@ -357,17 +366,19 @@ class Scheduler:
                         pickle.dump(finished_branch,f)
                     worker2task[str(i)] = None
                     worker_active[i] = False
-            publish_idle_count()
+                    any_tasks_completed = True
+            if any_tasks_completed:
+                publish_idle_count()
             # Update status file
             for i in worker_idxs:
                 status = self.status_msg[i].receive('newest')
                 if status is not None:
                     tools.debug_print('got status update from worker (%d)'%(get_worker_proc_num(i)))
                     worker_proc_status[i] = status
-            self.status_publisher.update(worker_proc_status)
+            self.status_publisher.update(worker_proc_status,len(self.task_queue))
             # Check termination criterion
             if not any(worker_active) and len(self.task_queue)==0:
-                self.status_publisher.update(worker_proc_status,force=True)
+                self.status_publisher.update(worker_proc_status,len(self.task_queue),force=True)
                 self.status_publisher.reset_eta()
                 return
 

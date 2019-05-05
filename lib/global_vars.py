@@ -24,7 +24,6 @@ STATUS_TAG = 11 # MPI Isend tag for worker status
 NEW_WORK_TAG = 22 # MPI Isend tag for new work for a worker process
 NEW_BRANCH_TAG = 33 # MPI Isend tag for new branch root to put into queue
 FINISHED_BRANCH_TAG = 44 # MPI Isend tag for finished branch
-IDLE_WORKER_COUNT_TAG = 55 # MPI Isend tag for number of idle workers
 SCHEDULER_PROC = 0 # MPI rank of scheduler process
 WORKER_PROCS = [i for i in range(N_PROC) if i!=SCHEDULER_PROC] # MPI ranks of worker processes
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),os.pardir))
@@ -34,4 +33,5 @@ STATISTICS_FILE = DATA_DIR+'statistics.pkl' # Overall statistics
 TREE_FILE = DATA_DIR+'tree.pkl' # Overall tree
 ETA_RLS_FILE = DATA_DIR+'rls.pkl' # Overall tree
 BRANCHES_FILE = DATA_DIR+'branches.pkl' # Tree branches, used for tree building
+IDLE_COUNT_FILE = DATA_DIR+'idle_count.pkl' # Idle process count
 ERROR = '>>> ' # Error message prefix

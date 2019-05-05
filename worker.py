@@ -130,9 +130,6 @@ class Worker:
             else:
                 return self.lcss(branch,location)
         self.alg_call = alg_call
-        # MPI message requests
-        self.idle_worker_count_req = tools.NonblockingMPIMessageReceiver(source=global_vars.SCHEDULER_PROC,
-                                                                         tag=global_vars.IDLE_WORKER_COUNT_TAG)
     
     def offload_child_computation(self,child,location,which_alg):
         """
@@ -147,8 +144,9 @@ class Worker:
         which_alg : {'ecc','lcss'}
             Which algorithm is to be run for the partitioning.
         """
-        idle_worker_count = self.idle_worker_count_req.receive('newest')
-        if idle_worker_count is not None:
+        with open(global_vars.IDLE_COUNT_FILE,'rb') as f:
+            idle_worker_count= pickle.load(f)        
+        if idle_worker_count>0:
             tools.debug_print('idle worker count = %d'%(idle_worker_count))
             if idle_worker_count>0:
                 new_task = dict(branch_root=child,location=location,action=which_alg)
