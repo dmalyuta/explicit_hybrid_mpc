@@ -11,7 +11,7 @@ import os
 import cvxpy as cvx
 from mpi4py import MPI
 
-EXAMPLE = 'cwh_z' # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
+EXAMPLE = 'cwh_xy' # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
 ABS_FRAC = 0.1 # Fraction of full set for computing partition absolute error tolerance
 REL_ERR = 0.1 # Partition relative error tolerance
 SOLVER_OPTIONS = dict(solver=cvx.MOSEK, verbose=False) # Optimization solver options
