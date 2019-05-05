@@ -145,14 +145,13 @@ class Worker:
             Which algorithm is to be run for the partitioning.
         """
         with open(global_vars.IDLE_COUNT_FILE,'rb') as f:
-            idle_worker_count= pickle.load(f)        
+            idle_worker_count= pickle.load(f)
+        tools.debug_print('idle worker count = %d'%(idle_worker_count))
         if idle_worker_count>0:
-            tools.debug_print('idle worker count = %d'%(idle_worker_count))
-            if idle_worker_count>0:
-                new_task = dict(branch_root=child,location=location,action=which_alg)
-                global_vars.COMM.isend(new_task,dest=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_BRANCH_TAG)
-                return
-        self.alg_call(which_alg,child,location)
+            new_task = dict(branch_root=child,location=location,action=which_alg)
+            global_vars.COMM.isend(new_task,dest=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_BRANCH_TAG)
+        else:
+            self.alg_call(which_alg,child,location)
     
     def ecc(self,node,location):
         """
