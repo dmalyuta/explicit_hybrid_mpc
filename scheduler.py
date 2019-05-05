@@ -318,6 +318,7 @@ class Scheduler:
         worker_idxs = list(range(N_workers))
         worker2task = dict.fromkeys(worker_idxs)
         get_worker_proc_num = lambda i: global_vars.WORKER_PROCS[i]
+        task_dispatches = [None for _ in worker_idxs]
         while True:
             time.sleep(self.call_period)
             # Collect any new work from workers
@@ -333,14 +334,15 @@ class Scheduler:
                         # Dispatch task to worker process worker_proc_num
                         task = self.task_queue.pop()
                         tools.debug_print(('dispatching task to worker %d (%d tasks left), data {}'%(get_worker_proc_num(i),len(self.task_queue))).format(task))
-                        global_vars.COMM.send(task,dest=get_worker_proc_num(i),tag=global_vars.NEW_WORK_TAG)
+                        if task_dispatches[i] is not None:
+                            task_dispatches[i].wait()
+                        task_dispatches[i] = global_vars.COMM.isend(task,dest=get_worker_proc_num(i),tag=global_vars.NEW_WORK_TAG)
+                        #global_vars.COMM.send(task,dest=get_worker_proc_num(i),tag=global_vars.NEW_WORK_TAG)
                         worker2task[str(i)] = task
                         worker_active[i] = True
                     if len(self.task_queue)==0:
                         break # no more tasks to dispatch
-                publish_idle_count()
             # Collect completed work from workers
-            some_tasks_completed = False
             for i in worker_idxs:
                 #NB: there's just one message that should ever be in the buffer
                 finished_task = self.completed_work_msg[i].receive()
@@ -355,9 +357,7 @@ class Scheduler:
                         pickle.dump(finished_branch,f)
                     worker2task[str(i)] = None
                     worker_active[i] = False
-                    some_tasks_completed = True
-            if some_tasks_completed:
-                publish_idle_count()
+            publish_idle_count()
             # Update status file
             for i in worker_idxs:
                 status = self.status_msg[i].receive('newest')
