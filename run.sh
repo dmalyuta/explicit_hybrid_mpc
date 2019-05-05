@@ -3,6 +3,6 @@
 # Run the partitioning process
 # NB: Make sure that you have set the right Python virtualenv
 
-NUM_WORKERS=55 # Number of worker processes
+NUM_WORKERS=279 # Number of worker processes
 
 mpirun -n $((NUM_WORKERS+1)) ipython main.py
