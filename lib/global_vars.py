@@ -11,7 +11,7 @@ import os
 import cvxpy as cvx
 
 # MPC problem parameters (**set via command line arguments**)
-EXAMPLE = None # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
+EXAMPLE = None # Which example to run. Options: {'cwh_z','cwh_xy','cwh_xyz'}
 MPC_HORIZON = None # MPC prediction horizon length
 ABS_FRAC = None # Fraction of full set for computing partition absolute error tolerance
 REL_ERR = None # Partition relative error tolerance
