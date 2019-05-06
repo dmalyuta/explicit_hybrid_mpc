@@ -32,7 +32,7 @@ def parse_args(require_timestamp=False):
     # Parse the command-line arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('-e','--example',action='store',dest='example',type=str,
-                        choices=['cwh_z','cwh_xy'],help='which MPC algorithm to run',required=True)
+                        choices=['cwh_z','cwh_xy','cwh_xyz'],help='which MPC algorithm to run',required=True)
     parser.add_argument('-N','--nodes',action='store',dest='nodes',type=int,
                         help='number of nodes on which to run',required=True)
     parser.add_argument('-n','--ntasks-per-node',action='store',dest='tasks_per_node',type=int,
