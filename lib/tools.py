@@ -319,3 +319,38 @@ def set_global_variables(require_timestamp=False):
     global_vars.BRANCHES_FILE = global_vars.DATA_DIR+'/branches.pkl' # Tree branches, used for tree building
     global_vars.IDLE_COUNT_FILE = global_vars.DATA_DIR+'/idle_count.pkl' # Idle process count
     return timestamp
+
+def cluster_job_duration(m,N,n,e,lt,lv,s=1.5):
+    """
+    Compute the required job duration to ask from cluster scheduler.
+    
+    Parameters
+    ----------
+    m : int
+        Number of processes used in local benchmark.
+    N : int
+        Number of nodes on cluster.
+    n : int
+        Number of tasks per node on cluster.
+    e : int
+        ECC runtime in seconds in local benchmark.
+    lt : int
+        L-CSS runtime in seconds in local benchmark.
+    lv : float
+        Achieved L-CSS volume filled (in [0,100]).
+    s : float
+        Safety factor (ask for this fraction more time than computed from the
+        above data).
+        
+    Returns
+    -------
+    T : str
+        Job duration in HH:MM:SS format, rounded to nearest minute.
+    """
+    lv /= 100.
+    duration = (m-1)/(n*N-1)*(e+lt/lv)*s
+    hours = int(duration//3600)
+    minutes = int(np.ceil((duration-hours*3600)/60))
+    T = '%s:%s:00'%(str(hours).zfill(2),str(minutes).zfill(2))
+    print(T)
+    return T
