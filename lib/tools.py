@@ -16,6 +16,7 @@ import numpy as np
 import numpy.linalg as la
 import scipy.linalg as sla
 import scipy.spatial as scs
+from mpi4py import MPI
 
 import global_vars
 from tree import Tree, NodeData
@@ -38,9 +39,9 @@ class NonblockingMPIMessageReceiver:
         """
         def update_receiver():
             if buffer is not None:
-                self.req = global_vars.COMM.irecv(buffer,source=source,tag=tag)
+                self.req = MPI.COMM_WORLD.irecv(buffer,source=source,tag=tag)
             else:
-                self.req = global_vars.COMM.irecv(source=source,tag=tag)
+                self.req = MPI.COMM_WORLD.irecv(source=source,tag=tag)
             
         self.update_receiver = update_receiver
         self.update_receiver()
@@ -90,7 +91,7 @@ def debug_print(msg):
     msg : string
         The message to print.
     """
-    rank = global_vars.COMM.Get_rank()
+    rank = MPI.COMM_WORLD.Get_rank()
     if global_vars.VERBOSE:
         print('%s (%d): %s'%('scheduler' if rank==global_vars.SCHEDULER_PROC else 'worker',rank,msg))
 

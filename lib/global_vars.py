@@ -9,7 +9,6 @@ Copyright 2019 University of Washington. All rights reserved.
 
 import os
 import cvxpy as cvx
-from mpi4py import MPI
 
 # MPC problem parameters (**set via command line arguments**)
 EXAMPLE = None # Which example to run. Options: {'cwh_z','cwh_xy','pendulum'}
@@ -29,13 +28,10 @@ SOLVER_OPTIONS = dict(solver=cvx.MOSEK, verbose=False) # Optimization solver opt
 VERBOSE = False # Whether to print debug info to terminal
 #SOLVER_OPTIONS = dict(solver=cvx.GUROBI, verbose=False, Threads=1)
 #SOLVER_OPTIONS = dict(solver=cvx.ECOS_BB, verbose=False)
-COMM = MPI.COMM_WORLD # MPI communicator among all processes
-N_PROC = COMM.Get_size() # Total number of processes
 STATUS_TAG = 11 # MPI Isend tag for worker status
 NEW_WORK_TAG = 22 # MPI Isend tag for new work for a worker process
 NEW_BRANCH_TAG = 33 # MPI Isend tag for new branch root to put into queue
 FINISHED_BRANCH_TAG = 44 # MPI Isend tag for finished branch
 SCHEDULER_PROC = 0 # MPI rank of scheduler process
-WORKER_PROCS = [i for i in range(N_PROC) if i!=SCHEDULER_PROC] # MPI ranks of worker processes
 ERROR = '>>> ' # Error message prefix
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),os.pardir)) # Project root directory

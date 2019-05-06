@@ -10,6 +10,7 @@ Copyright 2019 University of Washington. All rights reserved.
 import time
 import pickle
 import numpy as np
+from mpi4py import MPI
 
 import global_vars
 import tools
@@ -40,7 +41,7 @@ class WorkerStatusPublisher:
         """
         Write the data to file.
         """        
-        self.req = global_vars.COMM.isend(self.data,dest=global_vars.SCHEDULER_PROC,tag=global_vars.STATUS_TAG)
+        self.req = MPI.COMM_WORLD.isend(self.data,dest=global_vars.SCHEDULER_PROC,tag=global_vars.STATUS_TAG)
         
     def reset_volume_filled_total(self):
         """Resets the ``volume_filled_total``."""
@@ -122,13 +123,13 @@ class Worker:
         
     def setup(self):
         # Optimization problem oracle
-        suboptimality_settings = global_vars.COMM.bcast(None,root=global_vars.SCHEDULER_PROC)
+        suboptimality_settings = MPI.COMM_WORLD.bcast(None,root=global_vars.SCHEDULER_PROC)
         self.oracle = example(abs_err=suboptimality_settings['abs_err'],
                               rel_err=suboptimality_settings['rel_err'])[1]
         tools.debug_print('made oracle')
         # Status publisher
         self.status_publisher = WorkerStatusPublisher()
-        global_vars.COMM.Barrier() # wait for all slaves to setup
+        MPI.COMM_WORLD.Barrier() # wait for all slaves to setup
         # Algorithm call selector
         def alg_call(which_alg,branch,location):
             if which_alg=='ecc':
@@ -161,7 +162,7 @@ class Worker:
         tools.debug_print('idle worker count = %d'%(idle_worker_count))
         if idle_worker_count>0:
             new_task = dict(branch_root=child,location=location,action=which_alg)
-            global_vars.COMM.isend(new_task,dest=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_BRANCH_TAG)
+            MPI.COMM_WORLD.isend(new_task,dest=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_BRANCH_TAG)
         else:
             self.alg_call(which_alg,child,location)
     
@@ -332,7 +333,7 @@ class Worker:
         while True:
             # Block until new data is received from scheduler
             tools.debug_print('waiting for data')
-            data = global_vars.COMM.recv(source=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_WORK_TAG)
+            data = MPI.COMM_WORLD.recv(source=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_WORK_TAG)
             tools.debug_print('received data {}'.format(data))
             if data['action']=='stop':
                 # Request from scheduler to stop
@@ -357,7 +358,7 @@ class Worker:
                 # Save completed branch and notify scheduler that it is available
                 with open(global_vars.DATA_DIR+'/branch_%s.pkl'%(data['location']),'wb') as f:
                     pickle.dump(data,f)
-                global_vars.COMM.send(1,dest=global_vars.SCHEDULER_PROC,tag=global_vars.FINISHED_BRANCH_TAG)
+                MPI.COMM_WORLD.send(1,dest=global_vars.SCHEDULER_PROC,tag=global_vars.FINISHED_BRANCH_TAG)
                 self.status_publisher.update(active=False)
 
 def main():

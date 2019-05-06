@@ -12,6 +12,7 @@ import time
 import glob
 import pickle
 import numpy as np
+from mpi4py import MPI
 
 import global_vars
 import tools
@@ -107,6 +108,7 @@ class MainStatusPublisher:
         """
         self.total_volume = total_volume
         self.time = dict(previous=None,total=0.,ecc=0.,lcss=0.)
+        self.worker_procs = [i for i in range(MPI.COMM_WORLD.Get_size()) if i!=global_vars.SCHEDULER_PROC]  # MPI ranks of worker processes
         
         # Create blank status and statistics files
         open(global_vars.STATUS_FILE,'w').close()
@@ -183,7 +185,7 @@ class MainStatusPublisher:
         self.eta_rls_update_counter += 1
         update_eta = (self.eta_rls_update_counter%self.eta_estimate_freq)==0
         if force or save_statistics or write_status or update_eta:
-            worker_idxs = list(range(len(global_vars.WORKER_PROCS)))
+            worker_idxs = list(range(len(self.worker_procs)))
             volume_filled_total = sum([proc_status[i]['volume_filled_total'] for i in worker_idxs if proc_status[i] is not None])
             volume_filled_frac = volume_filled_total/self.total_volume
         if update_eta:
@@ -241,7 +243,7 @@ class MainStatusPublisher:
                         if data is None:
                             continue
                         status_file.write('\n'.join([
-                                '# proc %d'%(global_vars.WORKER_PROCS[i]),
+                                '# proc %d'%(self.worker_procs[i]),
                                 'status: %s'%(data['status']),
                                 'algorithm: %s'%(data['algorithm']),
                                 'current branch:   %s'%(data['current_branch']),
@@ -293,27 +295,28 @@ class Scheduler:
         with open(global_vars.TREE_FILE,'wb') as f:
             pickle.dump(triangulated_Theta,f) # save the initial tree
         suboptimality_settings = dict(abs_err=oracle.eps_a,rel_err=oracle.eps_r)
-        global_vars.COMM.bcast(suboptimality_settings,root=global_vars.SCHEDULER_PROC)
+        MPI.COMM_WORLD.bcast(suboptimality_settings,root=global_vars.SCHEDULER_PROC)
         save_leaves_into_queue(triangulated_Theta,'ecc',self.task_queue)
         self.status_publisher = MainStatusPublisher(total_volume=total_volume(triangulated_Theta),
                                                     call_period=self.call_period,
                                                     status_write_period=self.status_write_period,
                                                     statistics_save_period=self.statistics_save_period)
         # MPI communication requests setup
+        self.worker_procs = [i for i in range(MPI.COMM_WORLD.Get_size()) if i!=global_vars.SCHEDULER_PROC]  # MPI ranks of worker processes
         self.task_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.NEW_BRANCH_TAG)
-                         for worker_proc_num in global_vars.WORKER_PROCS]
+                         for worker_proc_num in self.worker_procs]
         self.completed_work_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.FINISHED_BRANCH_TAG)
-                                   for worker_proc_num in global_vars.WORKER_PROCS]
+                                   for worker_proc_num in self.worker_procs]
         self.status_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.STATUS_TAG)
-                           for worker_proc_num in global_vars.WORKER_PROCS]
+                           for worker_proc_num in self.worker_procs]
         # Clean up the data directory
         for file in glob.glob(global_vars.DATA_DIR+'/branch_*.pkl'):
             os.remove(file)
         # Initialize idle worker count to all workers idle
         with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
-            pickle.dump(len(global_vars.WORKER_PROCS),f)
+            pickle.dump(len(self.worker_procs),f)
         # Wait for all slaves to setup
-        global_vars.COMM.Barrier() 
+        MPI.COMM_WORLD.Barrier() 
         
     def clear_queue(self):
         """Remove tasks from queue."""
@@ -329,8 +332,8 @@ class Scheduler:
             'stop' tells workers to stop, 'reset_volume' tells them to reset
             their total_volume_filled statistic to zero.
         """
-        for worker_proc_num in global_vars.WORKER_PROCS:
-            global_vars.COMM.send(dict(action=action),dest=worker_proc_num,tag=global_vars.NEW_WORK_TAG)
+        for worker_proc_num in self.worker_procs:
+            MPI.COMM_WORLD.send(dict(action=action),dest=worker_proc_num,tag=global_vars.NEW_WORK_TAG)
 
     def spin(self):
         """
@@ -350,12 +353,12 @@ class Scheduler:
             with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
                 pickle.dump(num_workers_with_no_work,f)
                 
-        N_workers = len(global_vars.WORKER_PROCS)
+        N_workers = len(self.worker_procs)
         worker_active = [False]*N_workers
         worker_proc_status = [None]*N_workers
         worker_idxs = list(range(N_workers))
         worker2task = dict.fromkeys(worker_idxs)
-        get_worker_proc_num = lambda i: global_vars.WORKER_PROCS[i]
+        get_worker_proc_num = lambda i: self.worker_procs[i]
         task_dispatches = [None for _ in worker_idxs]
         while True:
             time.sleep(self.call_period)
@@ -374,8 +377,7 @@ class Scheduler:
                         tools.debug_print(('dispatching task to worker %d (%d tasks left), data {}'%(get_worker_proc_num(i),len(self.task_queue))).format(task))
                         if task_dispatches[i] is not None:
                             task_dispatches[i].wait()
-                        task_dispatches[i] = global_vars.COMM.isend(task,dest=get_worker_proc_num(i),tag=global_vars.NEW_WORK_TAG)
-                        #global_vars.COMM.send(task,dest=get_worker_proc_num(i),tag=global_vars.NEW_WORK_TAG)
+                        task_dispatches[i] = MPI.COMM_WORLD.isend(task,dest=get_worker_proc_num(i),tag=global_vars.NEW_WORK_TAG)
                         worker2task[str(i)] = task
                         worker_active[i] = True
                     if len(self.task_queue)==0:
