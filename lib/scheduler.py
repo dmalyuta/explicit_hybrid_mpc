@@ -12,6 +12,9 @@ import time
 import glob
 import pickle
 import numpy as np
+
+import mpi4py
+mpi4py.rc.recv_mprobe = False # resolve UnpicklingError (https://tinyurl.com/mpi4py-unpickling-issue)
 from mpi4py import MPI
 
 import global_vars
