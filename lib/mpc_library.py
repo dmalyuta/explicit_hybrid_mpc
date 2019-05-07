@@ -7,6 +7,7 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import time
 import numpy as np
 import numpy.linalg as la
 from numpy.linalg import matrix_power as mpow
@@ -217,66 +218,46 @@ class SatelliteZ(MPC):
         super().__init__()
         # Parameters
         self.N = global_vars.MPC_HORIZON # Prediction horizon length
-        # Raw values
-        pars = {'mu': 3.986004418e14,  # [m^3*s^-2] Standard gravitational parameter
-                'R_E': 6378137.,       # [m] Earth mean radius
-                'h_E': 415e3,          # [m] Orbit height above Earth sea level
-                'T_s': 100,            # [s] Silent time
-                'pos_err_max': 10e-2,  # [m] Maximum position error
-                'vel_err_max': 1e-3,   # [m/s] Maximum velocity error
-                'delta_v_max': 2e-3,   # [m/s] Maximum input delta-v
-                'w_max': 50e-9,        # [m/s^2] Maximum exogenous acceleration (atmospheric drag)
-                'sigma_fix': 1e-6,     # [m/s] Fixed input error
-                'sigma_pos':2e-2,      # Position estimate error growth slope with position magnitude
-                'sigma_vel':1e-3,      # Velocity estimate error growth slope with velocity magnitude
-                'input_ang_err': 2.,   # [deg] Cone opening angle for input error
-                'p_max': 0.4e-2,       # [m] Maximum position estimate error
-                'v_max': 4e-6}         # [m/s] Maximum velocity estimate error
-        # Derived values
-        pars.update({'a': pars['h_E']+pars['R_E']})             # [m] Orbit radius
-        pars.update({'wo': np.sqrt(pars['mu']/pars['a']**3)})   # [rad/s] Orbital rate
-        pars.update({'delta_v_min': pars['delta_v_max']*0.01}) # [m/s] Min non-zero delta-v input (in each axis)
-        pars.update({'sigma_rcs': np.tan(np.deg2rad(pars['input_ang_err'])/2.)}) # Input error growth slope with input magnitude
-        self.pars = pars
+        self.pars = satellite_parameters()
         
         # Specifications
-        X = Polytope(R=[(-pars['pos_err_max'],pars['pos_err_max']),
-                        (-pars['vel_err_max'],pars['vel_err_max'])])
-        U_ext = Polytope(R=[(-pars['delta_v_max'],pars['delta_v_max'])])
-        U_int = Polytope(R=[(-pars['delta_v_min'],pars['delta_v_min'])])
+        X = Polytope(R=[(-self.pars['pos_err_max'],self.pars['pos_err_max']),
+                        (-self.pars['vel_err_max'],self.pars['vel_err_max'])])
+        U_ext = Polytope(R=[(-self.pars['delta_v_max'],self.pars['delta_v_max'])])
+        U_int = Polytope(R=[(-self.pars['delta_v_min'],self.pars['delta_v_min'])])
         # uncertainty set
         P = uc.UncertaintySet() # Left empty for chosen_spec=='nominal'
         n = 1 # Position dimension
         one,I,O = np.ones(n),np.eye(n),np.zeros((n,n))
-        P.addIndependentTerm('process',lb=-pars['w_max']*one,ub=pars['w_max']*one)
-        P.addIndependentTerm('state',lb=-np.concatenate([pars['p_max']*one,
-                                                         pars['v_max']*one]),
-                                     ub=np.concatenate([pars['p_max']*one,
-                                                        pars['v_max']*one]))
+        P.addIndependentTerm('process',lb=-self.pars['w_max']*one,ub=self.pars['w_max']*one)
+        P.addIndependentTerm('state',lb=-np.concatenate([self.pars['p_max']*one,
+                                                         self.pars['v_max']*one]),
+                                     ub=np.concatenate([self.pars['p_max']*one,
+                                                        self.pars['v_max']*one]))
         P.addDependentTerm('input',uc.DependencyDescription(
-                           lambda: cvx.Constant(pars['sigma_fix']),pq=2),dim=n)
+                           lambda: cvx.Constant(self.pars['sigma_fix']),pq=2),dim=n)
         P.addDependentTerm('state',uc.DependencyDescription(
-                           lambda nfx: pars['sigma_pos']*nfx,pq=np.inf,px=2,
+                           lambda nfx: self.pars['sigma_pos']*nfx,pq=np.inf,px=2,
                            Fx=np.hstack((I,O))),dim=n,L=np.vstack((I,O)))
         P.addDependentTerm('state',uc.DependencyDescription(
-                           lambda nfx: pars['sigma_vel']*nfx,pq=np.inf,px=2,
+                           lambda nfx: self.pars['sigma_vel']*nfx,pq=np.inf,px=2,
                            Fx=np.hstack((O,I))),dim=n,L=np.vstack((O,I)))
         P.addDependentTerm('input',uc.DependencyDescription(
-                           lambda nfu: pars['sigma_rcs']*nfu,pq=2,pu=2),dim=n)
+                           lambda nfu: self.pars['sigma_rcs']*nfu,pq=2,pu=2),dim=n)
         self.specs = Specifications(X,(U_int,U_ext),P)
         
         # Make plant
         # continuous-time
         self.n_x, self.n_u = 2,1
-        A_c = np.array([[0.,1.],[-pars['wo']**2,0.]])
+        A_c = np.array([[0.,1.],[-self.pars['wo']**2,0.]])
         B_c = np.array([[0.],[1.]])
         E_c = B_c.copy()
         # discrete-time
-        A = sla.expm(A_c*pars['T_s'])
+        A = sla.expm(A_c*self.pars['T_s'])
         B = A.dot(B_c)
         M = np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
         E = sla.expm(M)[:self.n_x,self.n_x:]
-        self.plant = Plant(pars['T_s'],A,B,E)
+        self.plant = Plant(self.pars['T_s'],A,B,E)
 
         # Setup the RMPC problem        
         self.setup_RMPC(Q_coeff=1e-2)
@@ -290,56 +271,36 @@ class SatelliteXY(MPC):
         super().__init__()
         # Parameters
         self.N = global_vars.MPC_HORIZON # Prediction horizon length
-        # Raw values
-        pars = {'mu': 3.986004418e14,  # [m^3*s^-2] Standard gravitational parameter
-                'R_E': 6378137.,       # [m] Earth mean radius
-                'h_E': 415e3,          # [m] Orbit height above Earth sea level
-                'T_s': 100,            # [s] Silent time
-                'pos_err_max': 10e-2,  # [m] Maximum position error
-                'vel_err_max': 1e-3,   # [m/s] Maximum velocity error
-                'delta_v_max': 2e-3,   # [m/s] Maximum input delta-v
-                'w_max': 50e-9,        # [m/s^2] Maximum exogenous acceleration (atmospheric drag)
-                'sigma_fix': 1e-6,     # [m/s] Fixed input error
-                'sigma_pos':2e-2,      # Position estimate error growth slope with position magnitude
-                'sigma_vel':1e-3,      # Velocity estimate error growth slope with velocity magnitude
-                'input_ang_err': 2.,   # [deg] Cone opening angle for input error
-                'p_max': 0.4e-2,       # [m] Maximum position estimate error
-                'v_max': 4e-6}         # [m/s] Maximum velocity estimate error
-        # Derived values
-        pars.update({'a': pars['h_E']+pars['R_E']})             # [m] Orbit radius
-        pars.update({'wo': np.sqrt(pars['mu']/pars['a']**3)})   # [rad/s] Orbital rate
-        pars.update({'delta_v_min': pars['delta_v_max']*0.01}) # [m/s] Min non-zero delta-v input (in each axis)
-        pars.update({'sigma_rcs': np.tan(np.deg2rad(pars['input_ang_err'])/2.)}) # Input error growth slope with input magnitude
-        self.pars = pars
+        self.pars = satellite_parameters()
         
         # Specifications
-        X = Polytope(R=[(-pars['pos_err_max'],pars['pos_err_max']),
-                        (-pars['pos_err_max'],pars['pos_err_max']),
-                        (-pars['vel_err_max'],pars['vel_err_max']),
-                        (-pars['vel_err_max'],pars['vel_err_max'])])
-        U_ext = Polytope(R=[(-pars['delta_v_max'],pars['delta_v_max']),
-                            (-pars['delta_v_max'],pars['delta_v_max'])])
-        U_int = Polytope(R=[(-pars['delta_v_min'],pars['delta_v_min']),
-                            (-pars['delta_v_min'],pars['delta_v_min'])])
+        X = Polytope(R=[(-self.pars['pos_err_max'],self.pars['pos_err_max']),
+                        (-self.pars['pos_err_max'],self.pars['pos_err_max']),
+                        (-self.pars['vel_err_max'],self.pars['vel_err_max']),
+                        (-self.pars['vel_err_max'],self.pars['vel_err_max'])])
+        U_ext = Polytope(R=[(-self.pars['delta_v_max'],self.pars['delta_v_max']),
+                            (-self.pars['delta_v_max'],self.pars['delta_v_max'])])
+        U_int = Polytope(R=[(-self.pars['delta_v_min'],self.pars['delta_v_min']),
+                            (-self.pars['delta_v_min'],self.pars['delta_v_min'])])
         # uncertainty set
         P = uc.UncertaintySet() # Left empty for chosen_spec=='nominal'
         n = 2 # Position dimension
         one,I,O = np.ones(n),np.eye(n),np.zeros((n,n))
-        P.addIndependentTerm('process',lb=-pars['w_max']*one,ub=pars['w_max']*one)
-        P.addIndependentTerm('state',lb=-np.concatenate([pars['p_max']*one,
-                                                         pars['v_max']*one]),
-                                     ub=np.concatenate([pars['p_max']*one,
-                                                        pars['v_max']*one]))
+        P.addIndependentTerm('process',lb=-self.pars['w_max']*one,ub=self.pars['w_max']*one)
+        P.addIndependentTerm('state',lb=-np.concatenate([self.pars['p_max']*one,
+                                                         self.pars['v_max']*one]),
+                                     ub=np.concatenate([self.pars['p_max']*one,
+                                                        self.pars['v_max']*one]))
         P.addDependentTerm('input',uc.DependencyDescription(
-                           lambda: cvx.Constant(pars['sigma_fix']),pq=2),dim=n)
+                           lambda: cvx.Constant(self.pars['sigma_fix']),pq=2),dim=n)
         P.addDependentTerm('state',uc.DependencyDescription(
-                           lambda nfx: pars['sigma_pos']*nfx,pq=np.inf,px=2,
+                           lambda nfx: self.pars['sigma_pos']*nfx,pq=np.inf,px=2,
                            Fx=np.hstack((I,O))),dim=n,L=np.vstack((I,O)))
         P.addDependentTerm('state',uc.DependencyDescription(
-                           lambda nfx: pars['sigma_vel']*nfx,pq=np.inf,px=2,
+                           lambda nfx: self.pars['sigma_vel']*nfx,pq=np.inf,px=2,
                            Fx=np.hstack((O,I))),dim=n,L=np.vstack((O,I)))
         P.addDependentTerm('input',uc.DependencyDescription(
-                           lambda nfu: pars['sigma_rcs']*nfu,pq=2,pu=2),dim=n)
+                           lambda nfu: self.pars['sigma_rcs']*nfu,pq=2,pu=2),dim=n)
         self.specs = Specifications(X,(U_int,U_ext),P)
         
         # Make plant
@@ -347,19 +308,19 @@ class SatelliteXY(MPC):
         self.n_x, self.n_u = 4,2
         A_c = np.array([[0.,0.,1.,0.],
                         [0.,0.,0.,1.],
-                        [3.*pars['wo']**2,0.,0.,2.*pars['wo']],
-                        [0.,0.,-2.*pars['wo'],0.]])
+                        [3.*self.pars['wo']**2,0.,0.,2.*self.pars['wo']],
+                        [0.,0.,-2.*self.pars['wo'],0.]])
         B_c = np.array([[0.,0.],
                         [0.,0.],
                         [1.,0.],
                         [0.,1.]])
         E_c = B_c.copy()
         # discrete-time
-        A = sla.expm(A_c*pars['T_s'])
+        A = sla.expm(A_c*self.pars['T_s'])
         B = A.dot(B_c)
         M = np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
         E = sla.expm(M)[:self.n_x,self.n_x:]
-        self.plant = Plant(pars['T_s'],A,B,E)
+        self.plant = Plant(self.pars['T_s'],A,B,E)
 
         # Setup the RMPC problem        
         self.setup_RMPC(Q_coeff=1e-2)
@@ -373,60 +334,40 @@ class SatelliteXYZ(MPC):
         super().__init__()
         # Parameters
         self.N = global_vars.MPC_HORIZON # Prediction horizon length
-        # Raw values
-        pars = {'mu': 3.986004418e14,  # [m^3*s^-2] Standard gravitational parameter
-                'R_E': 6378137.,       # [m] Earth mean radius
-                'h_E': 415e3,          # [m] Orbit height above Earth sea level
-                'T_s': 100,            # [s] Silent time
-                'pos_err_max': 10e-2,  # [m] Maximum position error
-                'vel_err_max': 1e-3,   # [m/s] Maximum velocity error
-                'delta_v_max': 2e-3,   # [m/s] Maximum input delta-v
-                'w_max': 50e-9,        # [m/s^2] Maximum exogenous acceleration (atmospheric drag)
-                'sigma_fix': 1e-6,     # [m/s] Fixed input error
-                'sigma_pos':2e-2,      # Position estimate error growth slope with position magnitude
-                'sigma_vel':1e-3,      # Velocity estimate error growth slope with velocity magnitude
-                'input_ang_err': 2.,   # [deg] Cone opening angle for input error
-                'p_max': 0.4e-2,       # [m] Maximum position estimate error
-                'v_max': 4e-6}         # [m/s] Maximum velocity estimate error
-        # Derived values
-        pars.update({'a': pars['h_E']+pars['R_E']})             # [m] Orbit radius
-        pars.update({'wo': np.sqrt(pars['mu']/pars['a']**3)})   # [rad/s] Orbital rate
-        pars.update({'delta_v_min': pars['delta_v_max']*0.01}) # [m/s] Min non-zero delta-v input (in each axis)
-        pars.update({'sigma_rcs': np.tan(np.deg2rad(pars['input_ang_err'])/2.)}) # Input error growth slope with input magnitude
-        self.pars = pars
+        self.pars = satellite_parameters()
         
         # Specifications
-        X = Polytope(R=[(-pars['pos_err_max'],pars['pos_err_max']),
-                        (-pars['pos_err_max'],pars['pos_err_max']),
-                        (-pars['pos_err_max'],pars['pos_err_max']),
-                        (-pars['vel_err_max'],pars['vel_err_max']),
-                        (-pars['vel_err_max'],pars['vel_err_max']),
-                        (-pars['vel_err_max'],pars['vel_err_max'])])
-        U_ext = Polytope(R=[(-pars['delta_v_max'],pars['delta_v_max']),
-                            (-pars['delta_v_max'],pars['delta_v_max']),
-                            (-pars['delta_v_max'],pars['delta_v_max'])])
-        U_int = Polytope(R=[(-pars['delta_v_min'],pars['delta_v_min']),
-                            (-pars['delta_v_min'],pars['delta_v_min']),
-                            (-pars['delta_v_min'],pars['delta_v_min'])])
+        X = Polytope(R=[(-self.pars['pos_err_max'],self.pars['pos_err_max']),
+                        (-self.pars['pos_err_max'],self.pars['pos_err_max']),
+                        (-self.pars['pos_err_max'],self.pars['pos_err_max']),
+                        (-self.pars['vel_err_max'],self.pars['vel_err_max']),
+                        (-self.pars['vel_err_max'],self.pars['vel_err_max']),
+                        (-self.pars['vel_err_max'],self.pars['vel_err_max'])])
+        U_ext = Polytope(R=[(-self.pars['delta_v_max'],self.pars['delta_v_max']),
+                            (-self.pars['delta_v_max'],self.pars['delta_v_max']),
+                            (-self.pars['delta_v_max'],self.pars['delta_v_max'])])
+        U_int = Polytope(R=[(-self.pars['delta_v_min'],self.pars['delta_v_min']),
+                            (-self.pars['delta_v_min'],self.pars['delta_v_min']),
+                            (-self.pars['delta_v_min'],self.pars['delta_v_min'])])
         # uncertainty set
         P = uc.UncertaintySet() # Left empty for chosen_spec=='nominal'
         n = 3 # Position dimension
         one,I,O = np.ones(n),np.eye(n),np.zeros((n,n))
-        P.addIndependentTerm('process',lb=-pars['w_max']*one,ub=pars['w_max']*one)
-        P.addIndependentTerm('state',lb=-np.concatenate([pars['p_max']*one,
-                                                         pars['v_max']*one]),
-                                     ub=np.concatenate([pars['p_max']*one,
-                                                        pars['v_max']*one]))
+        P.addIndependentTerm('process',lb=-self.pars['w_max']*one,ub=self.pars['w_max']*one)
+        P.addIndependentTerm('state',lb=-np.concatenate([self.pars['p_max']*one,
+                                                         self.pars['v_max']*one]),
+                                     ub=np.concatenate([self.pars['p_max']*one,
+                                                        self.pars['v_max']*one]))
         P.addDependentTerm('input',uc.DependencyDescription(
-                           lambda: cvx.Constant(pars['sigma_fix']),pq=2),dim=n)
+                           lambda: cvx.Constant(self.pars['sigma_fix']),pq=2),dim=n)
         P.addDependentTerm('state',uc.DependencyDescription(
-                           lambda nfx: pars['sigma_pos']*nfx,pq=np.inf,px=2,
+                           lambda nfx: self.pars['sigma_pos']*nfx,pq=np.inf,px=2,
                            Fx=np.hstack((I,O))),dim=n,L=np.vstack((I,O)))
         P.addDependentTerm('state',uc.DependencyDescription(
-                           lambda nfx: pars['sigma_vel']*nfx,pq=np.inf,px=2,
+                           lambda nfx: self.pars['sigma_vel']*nfx,pq=np.inf,px=2,
                            Fx=np.hstack((O,I))),dim=n,L=np.vstack((O,I)))
         P.addDependentTerm('input',uc.DependencyDescription(
-                           lambda nfu: pars['sigma_rcs']*nfu,pq=2,pu=2),dim=n)
+                           lambda nfu: self.pars['sigma_rcs']*nfu,pq=2,pu=2),dim=n)
         self.specs = Specifications(X,(U_int,U_ext),P)
         
         # Make plant
@@ -435,9 +376,9 @@ class SatelliteXYZ(MPC):
         A_c = np.array([[0.,0.,0.,1.,0.,0.],
                         [0.,0.,0.,0.,1.,0.],
                         [0.,0.,0.,0.,0.,1.],
-                        [3.*pars['wo']**2,0.,0.,0.,2.*pars['wo'],0.],
-                        [0.,0.,0.,-2.*pars['wo'],0.,0.],
-                        [0.,0.,-pars['wo']**2,0.,0.,0.]])
+                        [3.*self.pars['wo']**2,0.,0.,0.,2.*self.pars['wo'],0.],
+                        [0.,0.,0.,-2.*self.pars['wo'],0.,0.],
+                        [0.,0.,-self.pars['wo']**2,0.,0.,0.]])
         B_c = np.array([[0.,0.,0.],
                         [0.,0.,0.],
                         [0.,0.,0.],
@@ -446,11 +387,171 @@ class SatelliteXYZ(MPC):
                         [0.,0.,1.]])
         E_c = B_c.copy()
         # discrete-time
-        A = sla.expm(A_c*pars['T_s'])
+        A = sla.expm(A_c*self.pars['T_s'])
         B = A.dot(B_c)
         M = np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
         E = sla.expm(M)[:self.n_x,self.n_x:]
-        self.plant = Plant(pars['T_s'],A,B,E)
+        self.plant = Plant(self.pars['T_s'],A,B,E)
 
         # Setup the RMPC problem        
         self.setup_RMPC(Q_coeff=1e-2)
+
+class ExplicitMPC:
+    def __init__(self,tree):
+        """
+        Parameters
+        ----------
+        tree : Tree
+            Root of the explicit MPC partition tree.
+        """
+        self.tree = tree
+        self.setup()
+
+    def setup(self):
+        """Readies the explicit MPC implementation for use."""
+        self.compute_simplex_basis_inverse()
+        self.eps = np.finfo(np.float64).eps # machine epsilon precision
+
+    def compute_simplex_basis_inverse(self):
+        """
+        Give a simplex S=co{v_0,...,v_n}\in R^n, let M=[v_1-v_0 ... v_n-v_0]\in
+        R^{n x n} and c=v_0. We can check if x\in S by verifying that every
+        element of inv(S)*(x-c) is \in [0,1].
+
+        This function computes S for each "left child" simplex of the
+        partition. Since the partition is a binary tree, no need to compute for
+        the "right child" since, if not in left child ==> in right child.
+        """
+        def compute_Minv_for_each_left_child(cursor):
+            """
+            See the above description.
+            **NB**: modifies cursor (adds new member variable Minv to it).
+            
+            Parameters
+            ----------
+            cursor : Tree
+                Tree root.
+            """
+            Minv = lambda v: la.inv(np.column_stack([_v-v[0] for _v in v[1:]]))
+            if cursor.is_leaf():
+                cursor.data.Minv = Minv(cursor.data.vertices)
+            else:
+                cursor.left.data.Minv = Minv(cursor.left.data.vertices)
+                compute_Minv_for_each_left_child(cursor.left)
+                compute_Minv_for_each_left_child(cursor.right)
+        compute_Minv_for_each_left_child(self.tree)
+
+    def check_containment(self,x,cell):
+        """
+        Checks if x \in simplex cell.
+
+        Parameters
+        ----------
+        x : np.array
+            Vector to be checked if it is contained in the simplex.
+        cell : NodeData
+            Cell data.
+
+        Returns
+        -------
+        is_contained : bool
+            ``True`` if x \in cell.
+        """
+        c = cell.vertices[0]
+        Minv = cell.Minv
+        alpha = list(Minv.dot(x-c))
+        alpha.append(1-sum(alpha)) # alpha[0], but store last since O(1)
+        is_contained = np.all([a>=-self.eps and a<=1+self.eps for a in alpha])
+        return is_contained
+
+    def get_containing_cell(self,x):
+        """
+        Get the data of the cell which contains parameter x.
+
+        Parameters
+        ----------
+        x : np.array
+            Parameter in the multiparameteric MPC (i.e. current state).
+
+        Returns
+        -------
+        : NodeData
+            Data of the cell which contains x.
+        """
+        def browse_tree(cursor):
+            """
+            Searches the tree of the cell which contains x.
+
+            Parameters
+            ----------
+            cursor : Tree
+                Root of the tree.
+            """
+            if cursor.is_leaf():
+                return cursor.data
+            else:
+                if self.check_containment(x,cursor.left.data):
+                    return browse_tree(cursor.left)
+                else:
+                    return browse_tree(cursor.right)
+        return browse_tree(self.tree)
+    
+    def __call__(self,x):
+        """
+        Returns epsilon-suboptimal control input for the given parameter x.
+
+        [1] D. Malyuta, B. Acikmese, M. Cacan, and D. S. Bayard, "Approximate
+        Mixed-integer Convex Multiparametric Programming," in Control Systems
+        Letters (in review), IEEE.
+
+        Parameters
+        ----------
+        x : np.array
+            Current state (parameter theta in the paper [1]).
+
+        Returns
+        -------
+        u : np.array
+            Epsilon-suboptimal input.
+        t : float
+            Evaluation time.
+        """
+        tic = time.time()
+        R = self.get_containing_cell(x)
+        alpha = R.Minv.dot(x-R.vertices[0])
+        alpha0 = 1-sum(alpha)
+        u = alpha0*R.vertex_inputs[0]+R.vertex_inputs[1:].T.dot(alpha)
+        toc = time.time()
+        t = toc-tic
+        return u,t
+
+def satellite_parameters():
+    """
+    Compile CWH MPC common parameters.
+
+    Returns
+    -------
+    pars : dict
+        Dictionary of parameters.
+    """
+    # Raw values
+    pars = {'mu': 3.986004418e14,  # [m^3*s^-2] Standard gravitational parameter
+            'R_E': 6378137.,       # [m] Earth mean radius
+            'h_E': 415e3,          # [m] Orbit height above Earth sea level
+            'T_s': 100,            # [s] Silent time
+            'pos_err_max': 10e-2,  # [m] Maximum position error
+            'vel_err_max': 1e-3,   # [m/s] Maximum velocity error
+            'delta_v_max': 2e-3,   # [m/s] Maximum input delta-v
+            'w_max': 50e-9,        # [m/s^2] Maximum exogenous acceleration (atmospheric drag)
+            'sigma_fix': 1e-6,     # [m/s] Fixed input error
+            'sigma_pos':2e-2,      # Position estimate error growth slope with position magnitude
+            'sigma_vel':1e-3,      # Velocity estimate error growth slope with velocity magnitude
+            'input_ang_err': 2.,   # [deg] Cone opening angle for input error
+            'p_max': 0.4e-2,       # [m] Maximum position estimate error
+            'v_max': 4e-6}         # [m/s] Maximum velocity estimate error
+    # Derived values
+    pars.update({'a': pars['h_E']+pars['R_E']})             # [m] Orbit radius
+    pars.update({'wo': np.sqrt(pars['mu']/pars['a']**3)})   # [rad/s] Orbital rate
+    pars.update({'delta_v_min': pars['delta_v_max']*0.01}) # [m/s] Min non-zero delta-v input (in each axis)
+    pars.update({'sigma_rcs': np.tan(np.deg2rad(pars['input_ang_err'])/2.)}) # Input error growth slope with input magnitude
+    return pars

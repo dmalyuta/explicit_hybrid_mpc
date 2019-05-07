@@ -18,7 +18,7 @@ import worker
 
 def main():
     """Runs the scheduler for one process, and the worker for all other processes."""
-    prepare.set_global_variables(require_timestamp=True)
+    prepare.set_global_variables()
     if MPI.COMM_WORLD.Get_rank()==global_vars.SCHEDULER_PROC:
         args = prepare.parse_args()
         scheduler.main(args['ecc_tree'])

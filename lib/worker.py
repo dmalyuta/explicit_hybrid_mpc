@@ -128,7 +128,7 @@ class Worker:
         # Optimization problem oracle
         suboptimality_settings = MPI.COMM_WORLD.bcast(None,root=global_vars.SCHEDULER_PROC)
         self.oracle = example(abs_err=suboptimality_settings['abs_err'],
-                              rel_err=suboptimality_settings['rel_err'])[1]
+                              rel_err=suboptimality_settings['rel_err'])[2]
         tools.debug_print('made oracle')
         # Status publisher
         self.status_publisher = WorkerStatusPublisher()
@@ -175,7 +175,7 @@ class Worker:
         node and this grows the tree until its leaves are feasible partition cells.
         **Caution**: modifies ``node`` (passed by reference).
         
-        [Malyuta2019a] D. Malyuta, B. Açıkmeşe, M. Cacan, and D. S. Bayard,
+        [Malyuta2019a] D. Malyuta, B. Acikmese, M. Cacan, and D. S. Bayard,
         "Partition-based feasible integer solution pre-computation for hybrid model
         predictive control," in 2019 European Control Conference (in review), IFAC,
         jun 2019.
@@ -228,7 +228,7 @@ class Worker:
         
         * Assuming that no leaf is closed due to a bad condition number.
         
-        [Malyuta2019b] D. Malyuta, B. Açıkmeşe, M. Cacan, and D. S. Bayard,
+        [Malyuta2019b] D. Malyuta, B. Acikmese, M. Cacan, and D. S. Bayard,
         "Partition-based feasible integer solution pre-computation for hybrid
         model predictive control," in Control Systems Letters (to be submitted),
         IEEE.

@@ -294,7 +294,7 @@ class Scheduler:
                 return total_volume(cursor.left)+total_volume(cursor.right)
         
         # Initial tree setup and oracle suboptimality settings
-        triangulated_Theta,oracle = example(abs_frac=global_vars.ABS_FRAC,rel_err=global_vars.REL_ERR)
+        _,triangulated_Theta,oracle = example(abs_frac=global_vars.ABS_FRAC,rel_err=global_vars.REL_ERR)
         with open(global_vars.TREE_FILE,'wb') as f:
             pickle.dump(triangulated_Theta,f) # save the initial tree
         suboptimality_settings = dict(abs_err=oracle.eps_a,rel_err=oracle.eps_r)

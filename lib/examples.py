@@ -31,6 +31,8 @@ def satellite_z_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
         
     Returns
     -------
+    full_set : Polytope
+        The set to be partitioned.
     partition : Tree
         The initial invariant set, pre-partitioned into simplices via Delaunay
         triangulation.
@@ -40,9 +42,9 @@ def satellite_z_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     # Plant
     sat = mpc_library.SatelliteZ()
     # The set to partition
-    Theta = Polytope(R=[(-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
-                        (-sat.pars['vel_err_max'],sat.pars['vel_err_max'])])
-    Theta = np.row_stack(Theta.V)
+    full_set = Polytope(R=[(-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
+                           (-sat.pars['vel_err_max'],sat.pars['vel_err_max'])])
+    Theta = np.row_stack(full_set.V)
     # Create the optimization problem oracle
     if abs_err is None:
         oracle = Oracle(sat,eps_a=1.,eps_r=1.)
@@ -50,7 +52,7 @@ def satellite_z_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err)
     # Initial triangulation
     partition, number_init_simplices, vol = delaunay(Theta)
-    return partition, oracle
+    return full_set, partition, oracle
 
 def satellite_xy_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     """
@@ -68,6 +70,8 @@ def satellite_xy_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
         
     Returns
     -------
+    full_set : Polytope
+        The set to be partitioned.
     partition : Tree
         The initial invariant set, pre-partitioned into simplices via Delaunay
         triangulation.
@@ -77,11 +81,11 @@ def satellite_xy_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     # Plant
     sat = mpc_library.SatelliteXY()
     # The set to partition
-    Theta = Polytope(R=[(-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
-                        (-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
-                        (-sat.pars['vel_err_max'],sat.pars['vel_err_max']),
-                        (-sat.pars['vel_err_max'],sat.pars['vel_err_max'])])
-    Theta = np.row_stack(Theta.V)
+    full_set = Polytope(R=[(-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
+                           (-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
+                           (-sat.pars['vel_err_max'],sat.pars['vel_err_max']),
+                           (-sat.pars['vel_err_max'],sat.pars['vel_err_max'])])
+    Theta = np.row_stack(full_set.V)
     # Create the optimization problem oracle
     if abs_err is None:
         oracle = Oracle(sat,eps_a=1.,eps_r=1.)
@@ -89,7 +93,7 @@ def satellite_xy_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err)
     # Initial triangulation
     partition, number_init_simplices, vol = delaunay(Theta)
-    return partition, oracle
+    return full_set, partition, oracle
     
 def satellite_xyz_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     """
@@ -107,6 +111,8 @@ def satellite_xyz_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
         
     Returns
     -------
+    full_set : Polytope
+        The set to be partitioned.
     partition : Tree
         The initial invariant set, pre-partitioned into simplices via Delaunay
         triangulation.
@@ -116,13 +122,13 @@ def satellite_xyz_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     # Plant
     sat = mpc_library.SatelliteXYZ()
     # The set to partition
-    Theta = Polytope(R=[(-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
-                        (-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
-                        (-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
-                        (-sat.pars['vel_err_max'],sat.pars['vel_err_max']),
-                        (-sat.pars['vel_err_max'],sat.pars['vel_err_max']),
-                        (-sat.pars['vel_err_max'],sat.pars['vel_err_max'])])
-    Theta = np.row_stack(Theta.V)
+    full_set = Polytope(R=[(-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
+                           (-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
+                           (-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
+                           (-sat.pars['vel_err_max'],sat.pars['vel_err_max']),
+                           (-sat.pars['vel_err_max'],sat.pars['vel_err_max']),
+                           (-sat.pars['vel_err_max'],sat.pars['vel_err_max'])])
+    Theta = np.row_stack(full_set.V)
     # Create the optimization problem oracle
     if abs_err is None:
         oracle = Oracle(sat,eps_a=1.,eps_r=1.)
@@ -130,7 +136,7 @@ def satellite_xyz_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err)
     # Initial triangulation
     partition, number_init_simplices, vol = delaunay(Theta)
-    return partition, oracle
+    return full_set, partition, oracle
 
 def example(*args,**kwargs):
     """

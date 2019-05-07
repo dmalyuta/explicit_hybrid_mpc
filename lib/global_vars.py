@@ -35,3 +35,5 @@ FINISHED_BRANCH_TAG = 44 # MPI Isend tag for finished branch
 SCHEDULER_PROC = 0 # MPI rank of scheduler process
 ERROR = '>>> ' # Error message prefix
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),os.pardir)) # Project root directory
+
+CMD_LINE_ARGS = None # The passed command-line arguments (**set via command line arguments**)

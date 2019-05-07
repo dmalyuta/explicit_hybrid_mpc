@@ -4,7 +4,7 @@ Computational geometry classes : polytope, simplex, vertex, etc.
 D. Malyuta -- ACL, University of Washington
 B. Acikmese -- ACL, University of Washington
 
-Copyright 2018 University of Washington. All rights reserved.
+Copyright 2019 University of Washington. All rights reserved.
 """
 
 import math
