@@ -15,11 +15,51 @@ import scipy.linalg as sla
 import scipy.spatial as scs
 
 import mpi4py
-mpi4py.rc.recv_mprobe = False # resolve UnpicklingError (https://tinyurl.com/mpi4py-unpickling-issue)
-from mpi4py import MPI
+# (maybe) resolves UnpicklingError (https://tinyurl.com/mpi4py-unpickling-issue)
+mpi4py.rc.recv_mprobe = False
+from mpi4py import MPI as mpi4py_MPI
 
 import global_vars
 from tree import Tree, NodeData
+
+class MPICommunicator:
+    def __init__(self):
+        self.comm = mpi4py_MPI.COMM_WORLD # MPI inter-process communicator
+
+    def size(self):
+        """Get total number of processes."""
+        return self.comm.Get_size()
+    
+    def rank(self):
+        """Get the process number (MPI rank)."""
+        return self.comm.Get_rank()
+    
+    def global_sync(self):
+        """MPI barrier global synchronization."""
+        self.comm.Barrier()
+        return None
+
+    def broadcast(self,*args,**kwargs):
+        """MPI broadcast (blocking)."""
+        return self.comm.bcast(*args,**kwargs)
+    
+    def nonblocking_receive(self,*args,**kwargs):
+        """MPI receive message, non-blocking."""
+        return self.comm.irecv(*args,**kwargs)
+
+    def nonblocking_send(self,*args,**kwargs):
+        """MPI send message, non-blocking."""
+        return self.comm.isend(*args,**kwargs)
+
+    def blocking_receive(self,*args,**kwargs):
+        """MPI receive message, blocking."""
+        return self.comm.recv(*args,**kwargs)
+    
+    def blocking_send(self,*args,**kwargs):
+        """MPI send message, blocking."""
+        return self.comm.send(*args,**kwargs)
+
+MPI = MPICommunicator() # Object that abstracts calls to MPI library routines
 
 class NonblockingMPIMessageReceiver:
     """Wraps a call to MPI's Comm.irecv."""
@@ -39,9 +79,9 @@ class NonblockingMPIMessageReceiver:
         """
         def update_receiver():
             if buffer is not None:
-                self.req = MPI.COMM_WORLD.irecv(buffer,source=source,tag=tag)
+                self.req = MPI.nonblocking_receive(buffer,source=source,tag=tag)
             else:
-                self.req = MPI.COMM_WORLD.irecv(source=source,tag=tag)
+                self.req = MPI.nonblocking_receive(source=source,tag=tag)
             
         self.update_receiver = update_receiver
         self.update_receiver()
@@ -91,7 +131,7 @@ def debug_print(msg):
     msg : string
         The message to print.
     """
-    rank = MPI.COMM_WORLD.Get_rank()
+    rank = MPI.rank()
     if global_vars.VERBOSE:
         print('%s (%d): %s'%('scheduler' if rank==global_vars.SCHEDULER_PROC else 'worker',rank,msg))
 

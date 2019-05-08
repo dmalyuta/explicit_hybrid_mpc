@@ -59,9 +59,9 @@ def parse_args():
     parser.add_argument('--runtime-dir',action='store',dest='runtime_dir',
                         type=str,help='force-specify the runtime directory'
                         ' name',required=False)
-    parser.add_argument('--ecc-tree',action='store',dest='ecc_tree',type=str,
-                        help='absolute path to tree.pkl output by ECC'
-                        ' algorithm',required=False)
+    parser.add_argument('-b','--branches',action='store_true',
+                        dest='use_branches',default=False,
+                        help='whether to use',required=False)
     args = vars(parser.parse_args())
     return args
 

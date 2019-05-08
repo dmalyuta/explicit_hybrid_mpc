@@ -11,10 +11,6 @@ import time
 import pickle
 import numpy as np
 
-import mpi4py
-mpi4py.rc.recv_mprobe = False # resolve UnpicklingError (https://tinyurl.com/mpi4py-unpickling-issue)
-from mpi4py import MPI
-
 import global_vars
 import tools
 from tree import NodeData
@@ -44,7 +40,7 @@ class WorkerStatusPublisher:
         """
         Write the data to file.
         """        
-        self.req = MPI.COMM_WORLD.isend(self.data,dest=global_vars.SCHEDULER_PROC,tag=global_vars.STATUS_TAG)
+        self.req = tools.MPI.nonblocking_send(self.data,dest=global_vars.SCHEDULER_PROC,tag=global_vars.STATUS_TAG)
         
     def reset_volume_filled_total(self):
         """Resets the ``volume_filled_total``."""
@@ -126,13 +122,13 @@ class Worker:
         
     def setup(self):
         # Optimization problem oracle
-        suboptimality_settings = MPI.COMM_WORLD.bcast(None,root=global_vars.SCHEDULER_PROC)
+        suboptimality_settings = tools.MPI.broadcast(None,root=global_vars.SCHEDULER_PROC)
         self.oracle = example(abs_err=suboptimality_settings['abs_err'],
                               rel_err=suboptimality_settings['rel_err'])[2]
         tools.debug_print('made oracle')
         # Status publisher
         self.status_publisher = WorkerStatusPublisher()
-        MPI.COMM_WORLD.Barrier() # wait for all slaves to setup
+        tools.MPI.global_sync() # wait for all slaves to setup
         # Algorithm call selector
         def alg_call(which_alg,branch,location):
             if which_alg=='ecc':
@@ -165,20 +161,20 @@ class Worker:
         tools.debug_print('idle worker count = %d'%(idle_worker_count))
         if idle_worker_count>0:
             new_task = dict(branch_root=child,location=location,action=which_alg)
-            MPI.COMM_WORLD.isend(new_task,dest=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_BRANCH_TAG)
+            tools.MPI.nonblocking_send(new_task,dest=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_BRANCH_TAG)
         else:
             self.alg_call(which_alg,child,location)
     
     def ecc(self,node,location):
         """
-        Implementation of [Malyuta2019a] Algorithm 2 lines 4-16. Pass a tree root
+        Implementation of [1] Algorithm 2 lines 4-16. Pass a tree root
         node and this grows the tree until its leaves are feasible partition cells.
         **Caution**: modifies ``node`` (passed by reference).
         
-        [Malyuta2019a] D. Malyuta, B. Acikmese, M. Cacan, and D. S. Bayard,
-        "Partition-based feasible integer solution pre-computation for hybrid model
-        predictive control," in 2019 European Control Conference (in review), IFAC,
-        jun 2019.
+        [1] D. Malyuta, B. Acikmese, M. Cacan, and D. S. Bayard,
+        "Partition-based feasible integer solution pre-computation for hybrid
+        model predictive control," in 2019 European Control Conference
+        (accepted), IFAC, jun 2019.
         
         Parameters
         ----------
@@ -221,17 +217,16 @@ class Worker:
     
     def lcss(self,node,location):
         """
-        Implementation of [Malyuta2019b] Algorithm 1 lines 4-20. Pass a tree root
+        Implementation of [1] Algorithm 1 lines 4-20. Pass a tree root
         node and this grows the tree until its leaves are associated with an
         epsilon-suboptimal commutation*.
         **Caution**: modifies ``node`` (passed by reference).
         
         * Assuming that no leaf is closed due to a bad condition number.
         
-        [Malyuta2019b] D. Malyuta, B. Acikmese, M. Cacan, and D. S. Bayard,
-        "Partition-based feasible integer solution pre-computation for hybrid
-        model predictive control," in Control Systems Letters (to be submitted),
-        IEEE.
+        [1] D. Malyuta and B. Acikmese, "Approximate Mixed-integer
+        Convex Multiparametric Programming," in Control Systems Letters (in
+        review), IEEE.
         
         Parameters
         ----------
@@ -287,9 +282,9 @@ class Worker:
             return vertex_inputs_S_1,vertex_inputs_S_2,vertex_costs_S_1,vertex_costs_S_2
     
         self.status_publisher.update(location=location)
-        delta_star,new_vertex_inputs_and_costs = self.oracle.D_delta_R(R=node.data.vertices,
-                                                                       V_delta_R=node.data.vertex_costs,
-                                                                       delta_ref=node.data.commutation)
+        delta_star,new_vertex_inputs_and_costs = self.oracle.D_delta_R(
+            R=node.data.vertices,V_delta_R=node.data.vertex_costs,
+            delta_ref=node.data.commutation)
         D_delta_R_infeasible = delta_star is None
         if D_delta_R_infeasible:
             # Close leaf
@@ -299,10 +294,10 @@ class Worker:
             self.status_publisher.update(volume_filled_increment=volume_closed)
         else:
             Nvx = node.data.vertices.shape[0]
-            new_vertex_costs = np.array([new_vertex_inputs_and_costs[i][1] for i
-                                         in range(Nvx)])
-            new_vertex_inputs = np.array([new_vertex_inputs_and_costs[i][0] for i
-                                          in range(Nvx)])
+            new_vertex_costs = np.array([new_vertex_inputs_and_costs[i][1]
+                                         for i in range(Nvx)])
+            new_vertex_inputs = np.array([new_vertex_inputs_and_costs[i][0]
+                                          for i in range(Nvx)])
             if self.oracle.in_variability_ball(R=node.data.vertices,
                                                V_delta_R=node.data.vertex_costs,
                                                delta_ref=node.data.commutation):
@@ -336,7 +331,8 @@ class Worker:
         while True:
             # Block until new data is received from scheduler
             tools.debug_print('waiting for data')
-            data = MPI.COMM_WORLD.recv(source=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_WORK_TAG)
+            data = tools.MPI.blocking_receive(source=global_vars.SCHEDULER_PROC,
+                                              tag=global_vars.NEW_WORK_TAG)
             tools.debug_print('received data {}'.format(data))
             if data['action']=='stop':
                 # Request from scheduler to stop
@@ -345,11 +341,14 @@ class Worker:
                 # Reset total volume filled statistic
                 self.status_publisher.reset_volume_filled_total()
             else:
-                tools.debug_print('got branch at location = %s'%(data['location']))
+                tools.debug_print('got branch at location = %s'%
+                                  (data['location']))
                 # Get data about the branch to be worked on
                 branch = data['branch_root']
                 branch_location = data['location']
-                self.status_publisher.set_new_root_simplex(branch.data.vertices,branch_location,data['action'])
+                self.status_publisher.set_new_root_simplex(branch.data.vertices,
+                                                           branch_location,
+                                                           data['action'])
                 self.status_publisher.update(active=True)
                 # Do work on this branch (i.e. partition this simplex)
                 try:
@@ -359,9 +358,11 @@ class Worker:
                     self.status_publisher.update(failed=True)
                     raise
                 # Save completed branch and notify scheduler that it is available
-                with open(global_vars.DATA_DIR+'/branch_%s.pkl'%(data['location']),'wb') as f:
+                with open(global_vars.DATA_DIR+'/branch_%s.pkl'%
+                          (data['location']),'wb') as f:
                     pickle.dump(data,f)
-                MPI.COMM_WORLD.send(1,dest=global_vars.SCHEDULER_PROC,tag=global_vars.FINISHED_BRANCH_TAG)
+                tools.MPI.blocking_send(1,dest=global_vars.SCHEDULER_PROC,
+                                        tag=global_vars.FINISHED_BRANCH_TAG)
                 self.status_publisher.update(active=False)
 
 def main():

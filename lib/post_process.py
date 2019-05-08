@@ -68,33 +68,18 @@ class PostProcessor:
         tree : Tree
             The created partition.
         """
-        # Load statistics
-        self.num_procs = (global_vars.CMD_LINE_ARGS['nodes']*
-                          global_vars.CMD_LINE_ARGS['tasks_per_node']-1)
-        self.statistics = dict(overall=dict(),
-                               process=[dict() for _ in range(self.num_procs)])
+        # Load overall progress statistics
+        self.statistics = dict()
         with open(global_vars.STATISTICS_FILE,'rb') as f:
             while True:
                 try:
                     data = pickle.load(f)
-                    # Overall
                     for key in data['overall'].keys():
                         value = data['overall'][key]
-                        if key in self.statistics['overall'].keys():
-                            self.statistics['overall'][key].append(value)
+                        if key in self.statistics.keys():
+                            self.statistics[key].append(value)
                         else:
-                            self.statistics['overall'][key] = [value]
-                    # Individual process
-                    for i in range(len(data['process'])):
-                        data_proc_i = data['process'][i]
-                        if data_proc_i is None:
-                            continue
-                        for key in data_proc_i.keys():
-                            value = data_proc_i[key]
-                            if key in self.statistics['process'][i].keys():
-                                self.statistics['process'][i][key].append(value)
-                            else:
-                                self.statistics['process'][i][key] = [value]
+                            self.statistics[key] = [value]
                 except EOFError:
                     break
         # Load tree
@@ -114,30 +99,30 @@ class PostProcessor:
            - Volume filled
            - Number of simplices
         """
-        simplex_count = self.statistics['overall']['simplex_count_total'][-1]
+        simplex_count = self.statistics['simplex_count_total'][-1]
         fig = self.__new_figure(figsize=(5.5,3))
         ax1 = fig.add_subplot(111)
-        ax1.plot(self.statistics['overall']['time_elapsed'],
-                 self.statistics['overall']['volume_filled_frac'],
+        ax1.plot(self.statistics['time_elapsed'],
+                 self.statistics['volume_filled_frac'],
                  color='black',linewidth=3,label='Volume filled')
-        ax1.plot(self.statistics['overall']['time_elapsed'],
+        ax1.plot(self.statistics['time_elapsed'],
                  [count/simplex_count for count in
-                  self.statistics['overall']['simplex_count_total']],
+                  self.statistics['simplex_count_total']],
                  color='blue',linewidth=3,label='Simplex count')
         ax1.set_xlabel('Time elapsed [s]')
         ax1.set_ylabel('Fraction of final value')
-        ax1.set_xlim([self.statistics['overall']['time_elapsed'][0],
-                      self.statistics['overall']['time_elapsed'][-1]])
+        ax1.set_xlim([self.statistics['time_elapsed'][0],
+                      self.statistics['time_elapsed'][-1]])
         ax1.set_ylim([0,1])
         ax1.legend(loc='lower right')
         ax2 = ax1.twinx()  # second axes that shares the same x-axis
         ax1.set_zorder(ax2.get_zorder()+1) # put ax1 in front
         ax1.patch.set_visible(False) # hide the 'canvas' 
-        ax2.fill_between(self.statistics['overall']['time_elapsed'],0,
-                         self.statistics['overall']['num_proc_active'],
+        ax2.fill_between(self.statistics['time_elapsed'],0,
+                         self.statistics['num_proc_active'],
                          color='orange',linewidth=0,alpha=0.4)
         ax2.set_ylabel('Active process count')
-        ax2.set_ylim([0,self.num_procs])
+        ax2.set_ylim([0,max(self.statistics['num_proc_active'])])
         plt.tight_layout()
         plt.show(block=False)
         
@@ -233,9 +218,9 @@ def main():
     """Run post-processing for data specified via command-line."""
     post_processor = PostProcessor()
     # Progress plot
-    post_processor.progress()
+    #post_processor.progress()
     # Total input usage comparison (implicit vs. explicit)
-    orbit_count = 20 # How many orbits to simulate for
+    orbit_count = 3 # How many orbits to simulate for
     wo = mpc_library.satellite_parameters()['wo'] # [rad/s] Orbital rate
     T_per_orbit = (2.*np.pi/wo) # [s] Time for one orbit
     T = T_per_orbit*orbit_count # [s] Simulation duration

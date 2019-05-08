@@ -21,32 +21,41 @@ create_jobs()
     done    
 }
 
-# CWH z
 EXAMPLE=cwh_z
-MPC_N=4
-ABS_FRACS=(0.01 0.03 0.1 0.25 0.5)
-REL_ERRS=(0.01 0.05 0.1 1.0 2.0)
-JOB_DURATIONS=('10:00:00' '02:00:00' '00:30:00' '00:10:00' '00:10:00')
-NODES_LIST=(15 3 1 1 1)
-
-create_jobs
-
-# CWH xy
-EXAMPLE=cwh_xy
-MPC_N=4
-ABS_FRACS=(0.15 0.25 0.5)
-REL_ERRS=(0.5 1.0 2.0)
-JOB_DURATIONS=('20:00:00' '20:00:00' '05:00:00')
-NODES_LIST=(15 15 5)
-
-create_jobs
-
-# CWH xyz
-EXAMPLE=cwh_xyz
 MPC_N=4
 ABS_FRACS=(0.5)
 REL_ERRS=(2.0)
-JOB_DURATIONS=('20:00:00')
-NODES_LIST=(40)
+JOB_DURATIONS=('10:00:00')
+NODES_LIST=(1)
 
 create_jobs
+
+# # CWH z
+# EXAMPLE=cwh_z
+# MPC_N=4
+# ABS_FRACS=(0.01 0.03 0.1 0.25 0.5)
+# REL_ERRS=(0.01 0.05 0.1 1.0 2.0)
+# JOB_DURATIONS=('10:00:00' '02:00:00' '00:30:00' '00:10:00' '00:10:00')
+# NODES_LIST=(15 3 1 1 1)
+
+# create_jobs
+
+# # CWH xy
+# EXAMPLE=cwh_xy
+# MPC_N=4
+# ABS_FRACS=(0.15 0.25 0.5)
+# REL_ERRS=(0.5 1.0 2.0)
+# JOB_DURATIONS=('20:00:00' '20:00:00' '05:00:00')
+# NODES_LIST=(15 15 5)
+
+# create_jobs
+
+# # CWH xyz
+# EXAMPLE=cwh_xyz
+# MPC_N=4
+# ABS_FRACS=(0.5)
+# REL_ERRS=(2.0)
+# JOB_DURATIONS=('20:00:00')
+# NODES_LIST=(40)
+
+# create_jobs

@@ -500,14 +500,10 @@ class ExplicitMPC:
         """
         Returns epsilon-suboptimal control input for the given parameter x.
 
-        [1] D. Malyuta, B. Acikmese, M. Cacan, and D. S. Bayard, "Approximate
-        Mixed-integer Convex Multiparametric Programming," in Control Systems
-        Letters (in review), IEEE.
-
         Parameters
         ----------
         x : np.array
-            Current state (parameter theta in the paper [1]).
+            Current state.
 
         Returns
         -------

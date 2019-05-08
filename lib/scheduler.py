@@ -13,12 +13,9 @@ import glob
 import pickle
 import numpy as np
 
-import mpi4py
-mpi4py.rc.recv_mprobe = False # resolve UnpicklingError (https://tinyurl.com/mpi4py-unpickling-issue)
-from mpi4py import MPI
-
 import global_vars
 import tools
+import prepare
 from examples import example
 
 class ETACalculator:
@@ -111,7 +108,7 @@ class MainStatusPublisher:
         """
         self.total_volume = total_volume
         self.time = dict(previous=None,total=0.,ecc=0.,lcss=0.)
-        self.worker_procs = [i for i in range(MPI.COMM_WORLD.Get_size()) if i!=global_vars.SCHEDULER_PROC]  # MPI ranks of worker processes
+        self.worker_procs = [i for i in range(tools.MPI.size()) if i!=global_vars.SCHEDULER_PROC]  # MPI ranks of worker processes
         
         # Create blank status and statistics files
         open(global_vars.STATUS_FILE,'w').close()
@@ -275,7 +272,7 @@ class Scheduler:
             Frequency [Hz] at which to save the progress statistics.
         """
         self.task_queue = [] # Queue of branch roots (i.e. simplices) to be partitioned
-        open(global_vars.BRANCHES_FILE,'w').close() # Clean up the file that'll hold finished tasks
+        
         self.call_period = 1./update_freq
         self.status_write_period = 1./status_write_freq
         self.statistics_save_period = 1./statistics_save_freq
@@ -298,14 +295,14 @@ class Scheduler:
         with open(global_vars.TREE_FILE,'wb') as f:
             pickle.dump(triangulated_Theta,f) # save the initial tree
         suboptimality_settings = dict(abs_err=oracle.eps_a,rel_err=oracle.eps_r)
-        MPI.COMM_WORLD.bcast(suboptimality_settings,root=global_vars.SCHEDULER_PROC)
+        tools.MPI.broadcast(suboptimality_settings,root=global_vars.SCHEDULER_PROC)
         save_leaves_into_queue(triangulated_Theta,'ecc',self.task_queue)
         self.status_publisher = MainStatusPublisher(total_volume=total_volume(triangulated_Theta),
                                                     call_period=self.call_period,
                                                     status_write_period=self.status_write_period,
                                                     statistics_save_period=self.statistics_save_period)
         # MPI communication requests setup
-        self.worker_procs = [i for i in range(MPI.COMM_WORLD.Get_size()) if i!=global_vars.SCHEDULER_PROC]  # MPI ranks of worker processes
+        self.worker_procs = [i for i in range(tools.MPI.size()) if i!=global_vars.SCHEDULER_PROC]  # MPI ranks of worker processes
         self.task_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.NEW_BRANCH_TAG)
                          for worker_proc_num in self.worker_procs]
         self.completed_work_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.FINISHED_BRANCH_TAG)
@@ -319,7 +316,7 @@ class Scheduler:
         with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
             pickle.dump(len(self.worker_procs),f)
         # Wait for all slaves to setup
-        MPI.COMM_WORLD.Barrier() 
+        tools.MPI.global_sync() 
         
     def clear_queue(self):
         """Remove tasks from queue."""
@@ -336,7 +333,8 @@ class Scheduler:
             their total_volume_filled statistic to zero.
         """
         for worker_proc_num in self.worker_procs:
-            MPI.COMM_WORLD.send(dict(action=action),dest=worker_proc_num,tag=global_vars.NEW_WORK_TAG)
+            tools.MPI.blocking_send(dict(action=action),dest=worker_proc_num,
+                                    tag=global_vars.NEW_WORK_TAG)
 
     def spin(self):
         """
@@ -362,14 +360,14 @@ class Scheduler:
         worker_idxs = list(range(N_workers))
         worker2task = dict.fromkeys(worker_idxs)
         get_worker_proc_num = lambda i: self.worker_procs[i]
-        task_dispatches = [None for _ in worker_idxs]
         while True:
             time.sleep(self.call_period)
             # Collect any new work from workers
             for i in worker_idxs:
                 tasks = self.task_msg[i].receive('all')
                 if tasks is not None:
-                    tools.debug_print('received %d new tasks from worker %d'%(len(tasks),get_worker_proc_num(i)))
+                    tools.debug_print('received %d new tasks from worker %d'%
+                                      (len(tasks),get_worker_proc_num(i)))
                     self.task_queue.extend(tasks)
             # Dispatch tasks to idle workers
             if len(self.task_queue)>0 and not all(worker_active):
@@ -377,10 +375,13 @@ class Scheduler:
                     if not worker_active[i]:
                         # Dispatch task to worker process worker_proc_num
                         task = self.task_queue.pop()
-                        tools.debug_print(('dispatching task to worker %d (%d tasks left), data {}'%(get_worker_proc_num(i),len(self.task_queue))).format(task))
-                        if task_dispatches[i] is not None:
-                            task_dispatches[i].wait()
-                        task_dispatches[i] = MPI.COMM_WORLD.isend(task,dest=get_worker_proc_num(i),tag=global_vars.NEW_WORK_TAG)
+                        tools.debug_print(('dispatching task to worker %d (%d '
+                                           'tasks left), data {}'%
+                                           (get_worker_proc_num(i),
+                                            len(self.task_queue))).format(task))
+                        tools.MPI.blocking_send(task,
+                                                dest=get_worker_proc_num(i),
+                                                tag=global_vars.NEW_WORK_TAG)
                         worker2task[str(i)] = task
                         worker_active[i] = True
                     if len(self.task_queue)==0:
@@ -392,7 +393,8 @@ class Scheduler:
                 #NB: there's just one message that should ever be in the buffer
                 finished_task = self.completed_work_msg[i].receive()
                 if finished_task is not None:
-                    tools.debug_print('received finished branch from worker %d'%(get_worker_proc_num(i)))
+                    tools.debug_print('received finished branch from worker %d'%
+                                      (get_worker_proc_num(i)))
                     location = worker2task[str(i)]['location']
                     task_filename = global_vars.DATA_DIR+'/branch_%s.pkl'%(location)
                     with open(task_filename,'rb') as f:
@@ -409,18 +411,21 @@ class Scheduler:
             for i in worker_idxs:
                 status = self.status_msg[i].receive('newest')
                 if status is not None:
-                    tools.debug_print('got status update from worker (%d)'%(get_worker_proc_num(i)))
+                    tools.debug_print('got status update from worker (%d)'%
+                                      (get_worker_proc_num(i)))
                     worker_proc_status[i] = status
             self.status_publisher.update(worker_proc_status,len(self.task_queue))
             # Check termination criterion
             if not any(worker_active) and len(self.task_queue)==0:
-                self.status_publisher.update(worker_proc_status,len(self.task_queue),force=True)
+                self.status_publisher.update(worker_proc_status,
+                                             len(self.task_queue),force=True)
                 self.status_publisher.reset_eta()
                 return
 
 def save_leaves_into_queue(cursor,algorithm,queue,__location=''):
     """
-    Save tree leaves into a queue list.
+    Save tree leaves into a queue list. Only saves the leaves that are not
+    already epsilon-suboptimal, and thus do not require further partitioning.
     
     Parameters
     ----------
@@ -434,7 +439,9 @@ def save_leaves_into_queue(cursor,algorithm,queue,__location=''):
         Current location of cursor. **Do not pass this in**.
     """
     if cursor.is_leaf():
-        queue.append(dict(branch_root=cursor,location=__location,action=algorithm))
+        if not cursor.data.is_epsilon_suboptimal:
+            queue.append(dict(branch_root=cursor,location=__location,
+                              action=algorithm))
     else:
         save_leaves_into_queue(cursor.left,algorithm,queue,__location+'0')
         save_leaves_into_queue(cursor.right,algorithm,queue,__location+'1')
@@ -458,6 +465,7 @@ def build_tree():
     # Load the tree branches
     branches = dict()
     with open(global_vars.BRANCHES_FILE,'rb') as f:
+        f.seek(0)
         while True:
             try:
                 branch = pickle.load(f)
@@ -492,29 +500,28 @@ def build_tree():
         pickle.dump(tree,f)
     return tree
 
-def main(ecc_tree=None):
+def main(branches_filename=None):
     """
     Runs the scheduler process.
     
     Parameters
     ----------
-    ecc_tree : str, optional
-        Absolute path to tree.pkl for a pre-computed tree by the ECC algorithm.
+    branches_filename : str, optional
+        Absolute path to branches.pkl for pre-computed branches by a
+        previous run of the algorithm. In this case, the branches get loaded
+        and only the ones that are not yet terminated (i.e. whose leaves are not
+        yet epsilon-suboptimal) get extended.
     """
+    args = prepare.parse_args()
     scheduler = Scheduler(update_freq=20.,status_write_freq=1.,statistics_save_freq=0.2)
-    # Run ECC: create feasible partition
-    if ecc_tree is None:
+    if not args['use_branches']:
+        # Clean up the file that'll hold finished tasks
+        open(global_vars.BRANCHES_FILE,'w').close()
+        # Run ECC: create feasible partition
         scheduler.spin()
-        tree = build_tree()
-        scheduler.tell_workers('reset_volume')
-        with open(global_vars.DATA_DIR+'/ecc_tree.pkl','wb') as f:
-            # backup the tree obtained from just running ECC
-            # (just a "feasible" partition)
-            pickle.dump(tree,f)
-    else:
-        with open(ecc_tree,'rb') as f:
-            tree = pickle.load(f)
-        scheduler.clear_queue()
+        scheduler.tell_workers('reset_volume')    
+    tree = build_tree()
+    scheduler.clear_queue()
     # Run L-CSS: create epsilon-suboptimal partition
     save_leaves_into_queue(tree,'lcss',scheduler.task_queue)
     scheduler.spin()
