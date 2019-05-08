@@ -296,7 +296,7 @@ class Scheduler:
             pickle.dump(triangulated_Theta,f) # save the initial tree
         suboptimality_settings = dict(abs_err=oracle.eps_a,rel_err=oracle.eps_r)
         tools.MPI.broadcast(suboptimality_settings,root=global_vars.SCHEDULER_PROC)
-        save_leaves_into_queue(triangulated_Theta,'ecc',self.task_queue)
+        self.save_leaves_into_queue(triangulated_Theta,'ecc')
         self.status_publisher = MainStatusPublisher(total_volume=total_volume(triangulated_Theta),
                                                     call_period=self.call_period,
                                                     status_write_period=self.status_write_period,
@@ -422,29 +422,30 @@ class Scheduler:
                 self.status_publisher.reset_eta()
                 return
 
-def save_leaves_into_queue(cursor,algorithm,queue,__location=''):
-    """
-    Save tree leaves into a queue list. Only saves the leaves that are not
-    already epsilon-suboptimal, and thus do not require further partitioning.
-    
-    Parameters
-    ----------
-    cursor : Tree
-        Root of the tree whose leaves to save into queue.
-    algorithm : {'ecc','lcss'}
-        Which algorithm to use for the partitioning.
-    queue : list
-        The queue into which to save the tasks associated with each leaf.
-    __location : string
-        Current location of cursor. **Do not pass this in**.
-    """
-    if cursor.is_leaf():
-        if not cursor.data.is_epsilon_suboptimal:
-            queue.append(dict(branch_root=cursor,location=__location,
-                              action=algorithm))
-    else:
-        save_leaves_into_queue(cursor.left,algorithm,queue,__location+'0')
-        save_leaves_into_queue(cursor.right,algorithm,queue,__location+'1')
+    def save_leaves_into_queue(self,cursor,algorithm,__location=''):
+        """
+        Save tree leaves into a queue list. Only saves the leaves that are not
+        already epsilon-suboptimal, and thus do not require further partitioning.
+
+        Parameters
+        ----------
+        cursor : Tree
+            Root of the tree whose leaves to save into queue.
+        algorithm : {'ecc','lcss'}
+            Which algorithm to use for the partitioning.
+        __location : string
+            Current location of cursor. **Do not pass this in**.
+        """
+        if cursor.is_leaf():
+            if not cursor.data.is_epsilon_suboptimal:
+                self.task_queue.append(dict(branch_root=cursor,
+                                            location=__location,
+                                            action=algorithm))
+            else:
+                self.status_publisher.total_volume -= tools.simplex_volume(cursor.data.vertices)
+        else:
+            self.save_leaves_into_queue(cursor.left,algorithm,__location+'0')
+            self.save_leaves_into_queue(cursor.right,algorithm,__location+'1')
 
 def build_tree():
     """
@@ -519,11 +520,11 @@ def main(branches_filename=None):
         open(global_vars.BRANCHES_FILE,'w').close()
         # Run ECC: create feasible partition
         scheduler.spin()
-        scheduler.tell_workers('reset_volume')    
+        scheduler.tell_workers('reset_volume')
     tree = build_tree()
     scheduler.clear_queue()
+    scheduler.save_leaves_into_queue(tree,'lcss')
     # Run L-CSS: create epsilon-suboptimal partition
-    save_leaves_into_queue(tree,'lcss',scheduler.task_queue)
     scheduler.spin()
     build_tree()
     scheduler.tell_workers('stop')
