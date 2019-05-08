@@ -121,7 +121,7 @@ def make_runtime_dir():
     arguments. Creates the following runtime directory structure (more may
     be added into this directory by the scheduler and worker scripts):
         
-        runtime_<example>_N_<N>_abs_<abs>_rel_<rel>_nodes_<nodes>_tpn_<tasks_per_node>_<timestamp>
+        runtime_<example>_N_<N>_abs_<abs>_rel_<rel>_<timestamp>
         |
         +--- data
         |    |
@@ -144,7 +144,7 @@ def make_runtime_dir():
             '#',
             '# Run the partitioning process by calling:',
             '# ```',
-            '# $ bash run.sh'
+            '# $ bash run.sh',
             '# ```',
             '# NB: Make sure that you have set the right Python virtualenv',
             '',

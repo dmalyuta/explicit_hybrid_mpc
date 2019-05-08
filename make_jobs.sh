@@ -17,8 +17,6 @@ create_jobs()
 
 	if $SUBMIT_JOBS; then
 	    sbatch -p stf -A stf $RUNTIME_DIR/hyak.slurm
-	else
-	    echo $RUNTIME_DIR
 	fi
     done    
 }
