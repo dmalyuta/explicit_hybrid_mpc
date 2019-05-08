@@ -260,80 +260,86 @@ class MainStatusPublisher:
                                 ])+'\n\n')
 
 class Scheduler:
-    def __init__(self,update_freq,status_write_freq,statistics_save_freq):
-        """
-        Parameters
-        ----------
-        update_freq : float
-            Frequency [Hz] at which to execute the ``spin()`` loop.
-        status_write_freq: float
-            Frequency [Hz] at which to update the ``status.txt`` file.
-        statistics_save_freq : float
-            Frequency [Hz] at which to save the progress statistics.
-        """
-        self.task_queue = [] # Queue of branch roots (i.e. simplices) to be partitioned
+    def __init__(self):
+        # Queue of nodes to be further partitioned
+        self.task_queue = []
         
-        self.call_period = 1./update_freq
-        self.status_write_period = 1./status_write_freq
-        self.statistics_save_period = 1./statistics_save_freq
+        self.call_period = 1./global_vars.SCHEDULER_RATE
+        self.status_write_period = 1./global_vars.STATUS_WRITE_FREQUENCY
+        self.statistics_save_period = 1./global_vars.STATISTICS_WRITE_FREQUENCY
         self.setup()
     
     def setup(self):
-        """
-        Initial setup. Prepares the task_queue to run the ECC initial feasible
-        partition algorithm.
-        """
+        """Initial setup. Prepares the task_queue to run the ECC initial
+        feasible partition algorithm."""
         def total_volume(cursor):
-            """Compute total volume of set. Cusors is triangulation tree's root."""
+            """Compute total volume of set. Cusors is triangulation tree's
+            root."""
             if cursor.is_leaf():
-                return tools.simplex_volume(cursor.data.vertices)
+                sx_vol = tools.simplex_volume(cursor.data.vertices)
+                return 0. if cursor.data.is_epsilon_suboptimal else sx_vol
             else:
                 return total_volume(cursor.left)+total_volume(cursor.right)
-        
-        # Initial tree setup and oracle suboptimality settings
-        _,triangulated_Theta,oracle = example(abs_frac=global_vars.ABS_FRAC,rel_err=global_vars.REL_ERR)
+
+        # Initial tree setup
+        _,tree,oracle = example(abs_frac=global_vars.ABS_FRAC,
+                                rel_err=global_vars.REL_ERR)
         with open(global_vars.TREE_FILE,'wb') as f:
-            pickle.dump(triangulated_Theta,f) # save the initial tree
+            # Save the delaunay triangulated version of the set to be
+            # partitioned
+            pickle.dump(tree,f)
+        
+        # Load pre-compute branches, if any
+        args = prepare.parse_args()
+        if args['use_branches']:
+            tree = build_tree()
+        else:
+            # Clean up the file that'll hold the branches
+            open(global_vars.BRANCHES_FILE,'w').close()
+
+        # Create the status publisher
+        self.status_publisher = MainStatusPublisher(
+            total_volume=total_volume(tree),
+            call_period=self.call_period,
+            status_write_period=self.status_write_period,
+            statistics_save_period=self.statistics_save_period)        
+
+        # Populate the task queue
+        self.populate_queue(tree)
+        
+        # Broadcast the suboptimality settings for worker oracles
         suboptimality_settings = dict(abs_err=oracle.eps_a,rel_err=oracle.eps_r)
-        tools.MPI.broadcast(suboptimality_settings,root=global_vars.SCHEDULER_PROC)
-        self.save_leaves_into_queue(triangulated_Theta,'ecc')
-        self.status_publisher = MainStatusPublisher(total_volume=total_volume(triangulated_Theta),
-                                                    call_period=self.call_period,
-                                                    status_write_period=self.status_write_period,
-                                                    statistics_save_period=self.statistics_save_period)
+        tools.MPI.broadcast(suboptimality_settings,
+                            root=global_vars.SCHEDULER_PROC)
+
         # MPI communication requests setup
-        self.worker_procs = [i for i in range(tools.MPI.size()) if i!=global_vars.SCHEDULER_PROC]  # MPI ranks of worker processes
-        self.task_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.NEW_BRANCH_TAG)
+        self.worker_procs = [i for i in range(tools.MPI.size()) if
+                             i!=global_vars.SCHEDULER_PROC] # Worker MPI ranks
+        self.task_msg = [tools.NonblockingMPIMessageReceiver(
+            source=worker_proc_num,tag=global_vars.NEW_BRANCH_TAG)
                          for worker_proc_num in self.worker_procs]
-        self.completed_work_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.FINISHED_BRANCH_TAG)
+        self.completed_work_msg = [tools.NonblockingMPIMessageReceiver(
+            source=worker_proc_num,tag=global_vars.FINISHED_BRANCH_TAG)
                                    for worker_proc_num in self.worker_procs]
-        self.status_msg = [tools.NonblockingMPIMessageReceiver(source=worker_proc_num,tag=global_vars.STATUS_TAG)
+        self.status_msg = [tools.NonblockingMPIMessageReceiver(
+            source=worker_proc_num,tag=global_vars.STATUS_TAG)
                            for worker_proc_num in self.worker_procs]
+        
         # Clean up the data directory
         for file in glob.glob(global_vars.DATA_DIR+'/branch_*.pkl'):
             os.remove(file)
+        
         # Initialize idle worker count to all workers idle
         with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
             pickle.dump(len(self.worker_procs),f)
+        
         # Wait for all slaves to setup
         tools.MPI.global_sync() 
-        
-    def clear_queue(self):
-        """Remove tasks from queue."""
-        self.task_queue.clear()
-        
-    def tell_workers(self,action):
-        """
-        Tell all worker processes to perform an action.
-
-        Parameters
-        ----------
-        action : {'stop','reset_volume'}
-            'stop' tells workers to stop, 'reset_volume' tells them to reset
-            their total_volume_filled statistic to zero.
-        """
+    
+    def stop_workers(self):
+        """Tell all worker processes to stop."""
         for worker_proc_num in self.worker_procs:
-            tools.MPI.blocking_send(dict(action=action),dest=worker_proc_num,
+            tools.MPI.blocking_send(dict(action='stop'),dest=worker_proc_num,
                                     tag=global_vars.NEW_WORK_TAG)
 
     def spin(self):
@@ -422,30 +428,29 @@ class Scheduler:
                 self.status_publisher.reset_eta()
                 return
 
-    def save_leaves_into_queue(self,cursor,algorithm,__location=''):
+    def populate_queue(self,cursor,__location=''):
         """
         Save tree leaves into a queue list. Only saves the leaves that are not
-        already epsilon-suboptimal, and thus do not require further partitioning.
+        already epsilon-suboptimal, and thus do not require further
+        partitioning.
 
         Parameters
         ----------
         cursor : Tree
             Root of the tree whose leaves to save into queue.
-        algorithm : {'ecc','lcss'}
-            Which algorithm to use for the partitioning.
         __location : string
             Current location of cursor. **Do not pass this in**.
         """
         if cursor.is_leaf():
             if not cursor.data.is_epsilon_suboptimal:
+                algorithm = 'lcss' if hasattr(cursor.data,
+                                              'commutation') else 'ecc'
                 self.task_queue.append(dict(branch_root=cursor,
                                             location=__location,
                                             action=algorithm))
-            else:
-                self.status_publisher.total_volume -= tools.simplex_volume(cursor.data.vertices)
         else:
-            self.save_leaves_into_queue(cursor.left,algorithm,__location+'0')
-            self.save_leaves_into_queue(cursor.right,algorithm,__location+'1')
+            self.populate_queue(cursor.left,__location+'0')
+            self.populate_queue(cursor.right,__location+'1')
 
 def build_tree():
     """
@@ -513,18 +518,7 @@ def main(branches_filename=None):
         and only the ones that are not yet terminated (i.e. whose leaves are not
         yet epsilon-suboptimal) get extended.
     """
-    args = prepare.parse_args()
-    scheduler = Scheduler(update_freq=20.,status_write_freq=1.,statistics_save_freq=0.2)
-    if not args['use_branches']:
-        # Clean up the file that'll hold finished tasks
-        open(global_vars.BRANCHES_FILE,'w').close()
-        # Run ECC: create feasible partition
-        scheduler.spin()
-        scheduler.tell_workers('reset_volume')
-    tree = build_tree()
-    scheduler.clear_queue()
-    scheduler.save_leaves_into_queue(tree,'lcss')
-    # Run L-CSS: create epsilon-suboptimal partition
+    scheduler = Scheduler()
     scheduler.spin()
     build_tree()
-    scheduler.tell_workers('stop')
+    scheduler.stop_workers()

@@ -25,7 +25,8 @@ class NodeData:
             at the vertices using the commutation.
         vertex_inputs : np.array (optional)
             2D array of the same length as vertices.shape[0] of optimal inputs
-            at the vertices using the commutation (row i is for the i-th vertex).
+            at the vertices using the commutation (row i is for the i-th
+            vertex).
         """
         self.timestamp = time.time()
         self.vertices = vertices

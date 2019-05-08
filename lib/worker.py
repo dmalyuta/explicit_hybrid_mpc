@@ -41,10 +41,6 @@ class WorkerStatusPublisher:
         Write the data to file.
         """        
         self.req = tools.MPI.nonblocking_send(self.data,dest=global_vars.SCHEDULER_PROC,tag=global_vars.STATUS_TAG)
-        
-    def reset_volume_filled_total(self):
-        """Resets the ``volume_filled_total``."""
-        self.data['volume_filled_total'] = 0.
     
     def set_new_root_simplex(self,R,location,algorithm):
         """
@@ -160,16 +156,18 @@ class Worker:
                 idle_worker_count = 0
         tools.debug_print('idle worker count = %d'%(idle_worker_count))
         if idle_worker_count>0:
-            new_task = dict(branch_root=child,location=location,action=which_alg)
-            tools.MPI.nonblocking_send(new_task,dest=global_vars.SCHEDULER_PROC,tag=global_vars.NEW_BRANCH_TAG)
+            new_task = dict(branch_root=child,location=location,
+                            action=which_alg)
+            tools.MPI.nonblocking_send(new_task,dest=global_vars.SCHEDULER_PROC,
+                                       tag=global_vars.NEW_BRANCH_TAG)
         else:
             self.alg_call(which_alg,child,location)
     
     def ecc(self,node,location):
         """
         Implementation of [1] Algorithm 2 lines 4-16. Pass a tree root
-        node and this grows the tree until its leaves are feasible partition cells.
-        **Caution**: modifies ``node`` (passed by reference).
+        node and this grows the tree until its leaves are feasible partition
+        cells. **Caution**: modifies ``node`` (passed by reference).
         
         [1] D. Malyuta, B. Acikmese, M. Cacan, and D. S. Bayard,
         "Partition-based feasible integer solution pre-computation for hybrid
@@ -203,17 +201,20 @@ class Worker:
                 self.ecc(node.right,location+'1')
             else:
                 # Assign feasible commutation to simplex
-                vertex_inputs_and_costs = [self.oracle.P_theta_delta(theta=vertex,delta=delta_hat)
+                vertex_inputs_and_costs = [self.oracle.P_theta_delta(
+                    theta=vertex,delta=delta_hat)
                                            for vertex in node.data.vertices]
                 Nvx = node.data.vertices.shape[0]
-                vertex_costs = np.array([vertex_inputs_and_costs[i][1] for i in range(Nvx)])
-                vertex_inputs = np.array([vertex_inputs_and_costs[i][0] for i in range(Nvx)])
+                vertex_costs = np.array([vertex_inputs_and_costs[i][1]
+                                         for i in range(Nvx)])
+                vertex_inputs = np.array([vertex_inputs_and_costs[i][0]
+                                          for i in range(Nvx)])
                 node.data = NodeData(vertices=node.data.vertices,
                                      commutation=delta_hat,
                                      vertex_costs=vertex_costs,
                                      vertex_inputs=vertex_inputs)
                 volume_closed = tools.simplex_volume(node.data.vertices)
-                self.status_publisher.update(volume_filled_increment=volume_closed)
+                self.offload_child_computation(node,location,'lcss')
     
     def lcss(self,node,location):
         """
@@ -337,9 +338,6 @@ class Worker:
             if data['action']=='stop':
                 # Request from scheduler to stop
                 return
-            elif data['action']=='reset_volume':
-                # Reset total volume filled statistic
-                self.status_publisher.reset_volume_filled_total()
             else:
                 tools.debug_print('got branch at location = %s'%
                                   (data['location']))
