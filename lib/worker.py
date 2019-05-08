@@ -289,11 +289,12 @@ class Worker:
             return vertex_inputs_S_1,vertex_inputs_S_2,vertex_costs_S_1,vertex_costs_S_2
     
         self.status_publisher.update(location=location)
-        delta_star,new_vertex_inputs_and_costs = self.oracle.D_delta_R(
-            R=node.data.vertices,V_delta_R=node.data.vertex_costs,
-            delta_ref=node.data.commutation)
-        D_delta_R_infeasible = delta_star is None
-        if D_delta_R_infeasible:
+        delta_star,theta_star,new_vertex_inputs_and_costs = (
+            self.oracle.bar_D_delta_R(R=node.data.vertices,
+                                      V_delta_R=node.data.vertex_costs,
+                                      delta_ref=node.data.commutation))
+        bar_D_delta_R_infeasible = delta_star is None
+        if bar_D_delta_R_infeasible:
             # Close leaf
             node.data.is_epsilon_suboptimal = True
             node.data.timestamp = time.time()
@@ -307,7 +308,9 @@ class Worker:
                                           for i in range(Nvx)])
             if self.oracle.in_variability_ball(R=node.data.vertices,
                                                V_delta_R=node.data.vertex_costs,
-                                               delta_ref=node.data.commutation):
+                                               delta_ref=node.data.commutation,
+                                               delta_star=delta_star,
+                                               theta_star=theta_star):
                 node.data.commutation = delta_star
                 node.data.vertex_costs = new_vertex_costs
                 node.data.vertex_inputs = new_vertex_inputs

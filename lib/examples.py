@@ -48,7 +48,8 @@ def satellite_z_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     # Create the optimization problem oracle
     if abs_err is None:
         oracle = Oracle(sat,eps_a=1.,eps_r=1.)
-        abs_err = np.max([oracle.P_theta(theta=vx)[2] for vx in [abs_frac*vx for vx in Theta]])
+        abs_err = np.max([oracle.P_theta(theta=vx)[2]
+                          for vx in [abs_frac*vx for vx in Theta]])
     oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err)
     # Initial triangulation
     partition, number_init_simplices, vol = delaunay(Theta)
@@ -89,7 +90,8 @@ def satellite_xy_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     # Create the optimization problem oracle
     if abs_err is None:
         oracle = Oracle(sat,eps_a=1.,eps_r=1.)
-        abs_err = np.max([oracle.P_theta(theta=vx)[2] for vx in [abs_frac*vx for vx in Theta]])
+        abs_err = np.max([oracle.P_theta(theta=vx)[2]
+                          for vx in [abs_frac*vx for vx in Theta]])
     oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err)
     # Initial triangulation
     partition, number_init_simplices, vol = delaunay(Theta)
@@ -132,7 +134,8 @@ def satellite_xyz_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     # Create the optimization problem oracle
     if abs_err is None:
         oracle = Oracle(sat,eps_a=1.,eps_r=1.)
-        abs_err = np.max([oracle.P_theta(theta=vx)[2] for vx in [abs_frac*vx for vx in Theta]])
+        abs_err = np.max([oracle.P_theta(theta=vx)[2]
+                          for vx in [abs_frac*vx for vx in Theta]])
     oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err)
     # Initial triangulation
     partition, number_init_simplices, vol = delaunay(Theta)

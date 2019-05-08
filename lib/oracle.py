@@ -36,47 +36,66 @@ class Oracle:
         self.eps_r = eps_r
         
         # Make P_theta, the original MINLP
-        constraints = self.mpc.make_constraints(self.mpc.x0,self.mpc.x,self.mpc.u,self.mpc.delta)
+        constraints = self.mpc.make_constraints(self.mpc.x0,self.mpc.x,
+                                                self.mpc.u,self.mpc.delta)
         self.minlp = cvx.Problem(self.mpc.cost,constraints)
-        self.minlp_feasibility = cvx.Problem(cvx.Minimize(0),constraints) # just to check feasibility
+        # just to check feasibility
+        self.minlp_feasibility = cvx.Problem(cvx.Minimize(0),constraints)
         
         # Make P_theta_delta, the fixed-commutation NLP
         self.delta_fixed = cvx.Parameter(self.mpc.Nu*self.mpc.N)
-        constraints = self.mpc.make_constraints(self.mpc.x0,self.mpc.x,self.mpc.u,self.delta_fixed)
+        constraints = self.mpc.make_constraints(self.mpc.x0,self.mpc.x,
+                                                self.mpc.u,self.delta_fixed)
         self.nlp = cvx.Problem(self.mpc.cost,constraints)
-        self.nlp_feasibility = cvx.Problem(cvx.Minimize(0),constraints) # just to check feasibility
+        # just to check feasibility
+        self.nlp_feasibility = cvx.Problem(cvx.Minimize(0),constraints)
         
         # Make V^R, the find-feasible-commutation-in-simplex MINLP
         x_theta = [self.mpc.make_ux()['x'] for _ in range(self.mpc.n_x+1)]
         u_theta = [self.mpc.make_ux()['u'] for _ in range(self.mpc.n_x+1)]
-        self.vertices = [cvx.Parameter(self.mpc.n_x) for _ in range(self.mpc.n_x+1)]
+        self.vertices = [cvx.Parameter(self.mpc.n_x)
+                         for _ in range(self.mpc.n_x+1)]
         feasibility_constraints = []
         for i in range(self.mpc.n_x+1):
             # Add a set of constraints for each vertex
-            feasibility_constraints += self.mpc.make_constraints(self.vertices[i],x_theta[i],u_theta[i],self.mpc.delta,
-                                                                 delta_sum_constraint=True if i==0 else False)
-        self.feasibility_in_simplex = cvx.Problem(self.mpc.cost,feasibility_constraints)
+            feasibility_constraints += self.mpc.make_constraints(
+                self.vertices[i],x_theta[i],u_theta[i],self.mpc.delta,
+                delta_sum_constraint=True if i==0 else False)
+        self.feasibility_in_simplex = cvx.Problem(self.mpc.cost,
+                                                  feasibility_constraints)
         
         # Make problems that allow verifying simplex-is-in-variability-ball
         # variables
         self.alpha = cvx.Variable(self.mpc.n_x+1,nonneg=True)
-        self.theta_in_simplex = sum([self.alpha[i]*self.vertices[i] for i in range(self.mpc.n_x+1)])
+        self.theta_in_simplex = sum([self.alpha[i]*self.vertices[i]
+                                     for i in range(self.mpc.n_x+1)])
         # problems
         in_simplex = [sum(self.alpha)==1]
-        constraints = self.mpc.make_constraints(self.theta_in_simplex,self.mpc.x,self.mpc.u,self.delta_fixed)+in_simplex
-        self.min_over_simplex_for_this_delta = cvx.Problem(self.mpc.cost,constraints)
-        constraints = self.mpc.make_constraints(self.theta_in_simplex,self.mpc.x,self.mpc.u,self.mpc.delta)+in_simplex
-        self.min_over_simplex_for_any_delta = cvx.Problem(self.mpc.cost,constraints)
+        constraints = self.mpc.make_constraints(self.theta_in_simplex,
+                                                self.mpc.x,self.mpc.u,
+                                                self.delta_fixed)+in_simplex
+        self.min_over_simplex_for_this_delta = cvx.Problem(self.mpc.cost,
+                                                           constraints)
+        constraints = self.mpc.make_constraints(self.theta_in_simplex,
+                                                self.mpc.x,
+                                                self.mpc.u,
+                                                self.mpc.delta)+in_simplex
+        self.min_over_simplex_for_any_delta = cvx.Problem(self.mpc.cost,
+                                                          constraints)
         
         # Make D_delta^R, the MINLP that searches for a more optimal commutation
         # variables
-        self.epsilon = cvx.Parameter()
         self.vertex_costs = cvx.Parameter(self.mpc.n_x+1)
-        self.bar_V = sum([self.alpha[i]*self.vertex_costs[i] for i in range(self.mpc.n_x+1)])
+        self.bar_V = sum([self.alpha[i]*self.vertex_costs[i]
+                          for i in range(self.mpc.n_x+1)])
         # constraints
-        self.D_delta_R_constraints = self.mpc.make_constraints(self.theta_in_simplex,self.mpc.x,self.mpc.u,self.mpc.delta)+in_simplex
-        self.D_delta_R_constraints += [self.bar_V-self.epsilon >= self.mpc.V]
-        #self.D_delta_R_constraints += feasibility_constraints # commutation has to be feasible everywhere in R
+        self.bar_D_delta_R_constraints = self.mpc.make_constraints(
+            self.theta_in_simplex,self.mpc.x,self.mpc.u,
+            self.mpc.delta)+in_simplex
+        self.bar_D_delta_R_constraints += [
+            self.bar_V-self.mpc.V >= self.eps_a,
+            self.bar_V-self.mpc.V >= self.eps_r*self.mpc.V]
+        self.bar_D_delta_R_constraints += feasibility_constraints
 
     def P_theta(self,theta,check_feasibility=False):
         """
@@ -169,7 +188,7 @@ class Oracle:
         delta_feas = self.mpc.delta.value
         return delta_feas
     
-    def in_variability_ball(self,R,V_delta_R,delta_ref):
+    def in_variability_ball(self,R,V_delta_R,delta_ref,delta_star,theta_star):
         """
         Check if variation of V_delta^* over simplex R is small enough (within
         epsilon-suboptimality tolerance).
@@ -183,6 +202,11 @@ class Oracle:
         delta_ref : np.array
             Reference "baseline" commutation against which suboptimality is to
             be checked (i.e. the one whose cost is being over-approximated).
+        delta_star : np.array
+            More optimal commutation found by bar_D_delta_R.
+        theta_star : np.array
+            Parameter value at which commutation found by bar_D_delta_R is more
+            optimal.
             
         Returns
         -------
@@ -193,12 +217,13 @@ class Oracle:
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
         max_lhs = np.max(V_delta_R)
-        min_lhs = self.min_over_simplex_for_this_delta.solve(**global_vars.SOLVER_OPTIONS)
-        rhs = max(self.eps_a,self.eps_r*self.min_over_simplex_for_any_delta.solve(**global_vars.SOLVER_OPTIONS))
-        #print(max_lhs,min_lhs,max_lhs-min_lhs,rhs)
+        min_lhs = self.min_over_simplex_for_this_delta.solve(
+            **global_vars.SOLVER_OPTIONS)
+        V_delta_theta = self.P_theta_delta(theta=theta_star,delta=delta_star)[1]
+        rhs = max(self.eps_a,self.eps_r*V_delta_theta)
         return max_lhs-min_lhs<rhs
     
-    def D_delta_R(self,R,V_delta_R,delta_ref):
+    def bar_D_delta_R(self,R,V_delta_R,delta_ref):
         """
         Try to find a more optimal commutation in R than delta_ref.
         
@@ -214,15 +239,16 @@ class Oracle:
             
         Returns
         -------
-        better_delta : np.array
+        delta_star : np.array
             More optimal commutation.
+        theta_star : np.array
+            Parameter value at which delta_start is more optimal.
+        vx_inputs_and_costs : list
+            List of vertex optimal inputs and costs using delta_star.
         """
-        self.delta_fixed.value = delta_ref
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
         self.vertex_costs.value = V_delta_R
-        self.min_V = self.min_over_simplex_for_any_delta.solve(**global_vars.SOLVER_OPTIONS)
-        self.epsilon.value = max(self.eps_a,self.eps_r*self.min_V)
         # Solve D_delta^R problem
         # **Secret sauce**: procedurally add new delta_ref's to list of
         # commutations that delta should not equal, in case D_delta^R comes up
@@ -230,31 +256,39 @@ class Oracle:
         # R (due to numerical issues - mathematically this should not happen)
         delta_neq_other_deltas = []
         while True:
-            find_more_optimal_commutation = cvx.Problem(cvx.Minimize(0),self.D_delta_R_constraints+delta_neq_other_deltas)
-            find_more_optimal_commutation.solve(**global_vars.SOLVER_OPTIONS)
-            better_delta = self.mpc.delta.value
-            if better_delta is None:
-                # If keep on adding delta_ref's that delta cannot equal, will
-                # eventually get into this case
-                new_vertex_inputs_and_costs = None
-                return better_delta,new_vertex_inputs_and_costs # D_delta^R infeasible
+            # Solve \bar D_delta^R
+            bar_D_delta_R = cvx.Problem(cvx.Minimize(0),
+                                        self.bar_D_delta_R_constraints+
+                                        delta_neq_other_deltas)
+            bar_D_delta_R.solve(**global_vars.SOLVER_OPTIONS)
+            delta_star = self.mpc.delta.value
+            theta_star = self.theta_in_simplex.value
+            if delta_star is None:
+                vx_inputs_and_costs = None
+                return delta_star,theta_star,vx_inputs_and_costs
+            
             # Check if P_theta_delta is feasible at each vertex
             try:
                 Nvx = len(R)
-                new_vertex_inputs_and_costs = [None for _ in range(Nvx)]
+                vx_inputs_and_costs = [None for _ in range(Nvx)]
                 for i in range(Nvx):
                     vertex = R[i]
-                    new_vertex_inputs_and_costs[i] = self.P_theta_delta(vertex,better_delta)
+                    vx_inputs_and_costs[i] = self.P_theta_delta(
+                        theta=vertex,delta=delta_star)
                     status = self.nlp.status
                     if status!=cvx.OPTIMAL and status!=cvx.OPTIMAL_INACCURATE:
                         raise cvx.SolverError('problem infeasible')
-                return better_delta,new_vertex_inputs_and_costs
+                return delta_star,theta_star,vx_inputs_and_costs
             except:
-                # Not feasible at some vertex -> solver must have returned an infeasible solution
-                # for find_more_optimal_commutation (numerical troubles)
-                delta_offset = cvx.Variable(self.mpc.Nu*self.mpc.N, boolean=True)
-                delta_neq_other_deltas += [self.mpc.delta[self.mpc.Nu*k+i] == better_delta[self.mpc.Nu*k+i]+
-                                           (1-2*better_delta[self.mpc.Nu*k+i])*delta_offset[self.mpc.Nu*k+i]
-                                           for k in range(self.mpc.N) for i in range(self.mpc.Nu)]
-                delta_neq_other_deltas += [sum([delta_offset[self.mpc.Nu*k+i] for k in range(self.mpc.N)
-                                           for i in range(self.mpc.Nu)]) >= 1]
+                # Not feasible at some vertex -> solver must have returned an
+                # infeasible solution for bar_D_delta_R (numerical troubles)
+                delta_offset = cvx.Variable(self.mpc.Nu*self.mpc.N,
+                                            boolean=True)
+                delta_neq_other_deltas += [
+                    self.mpc.delta[self.mpc.Nu*k+i]==delta_star[
+                        self.mpc.Nu*k+i]+(1-2*delta_star[self.mpc.Nu*k+i])*
+                    delta_offset[self.mpc.Nu*k+i]
+                    for k in range(self.mpc.N) for i in range(self.mpc.Nu)]
+                delta_neq_other_deltas += [
+                    sum([delta_offset[self.mpc.Nu*k+i] for k in
+                         range(self.mpc.N) for i in range(self.mpc.Nu)])>=1]

@@ -165,7 +165,8 @@ class MainStatusPublisher:
         # Determine if anything is to be done
         self.status_write_counter += 1
         self.statistics_save_counter += 1
-        save_statistics = (self.statistics_save_counter%self.statistics_save_freq)==0
+        save_statistics = (self.statistics_save_counter%
+                           self.statistics_save_freq)==0
         if save_statistics:
             self.statistics_save_counter = 0 # reset
         write_status = (self.status_write_counter%self.status_write_freq)==0
@@ -176,7 +177,9 @@ class MainStatusPublisher:
         update_eta = (self.eta_rls_update_counter%self.eta_estimate_freq)==0
         if force or save_statistics or write_status or update_eta:
             worker_idxs = list(range(len(self.worker_procs)))
-            volume_filled_total = sum([proc_status[i]['volume_filled_total'] for i in worker_idxs if proc_status[i] is not None])
+            volume_filled_total = sum([
+                proc_status[i]['volume_filled_total'] for i in worker_idxs
+                if proc_status[i] is not None])
             volume_filled_frac = volume_filled_total/self.total_volume
         if update_eta:
             self.eta_rls_update_counter = 0 # reset
@@ -205,7 +208,8 @@ class MainStatusPublisher:
                 proc_status[i]['time_active_total'] for i in worker_idxs if
                 proc_status[i] is not None])
             algorithms_list = [proc_status[i]['algorithm'] if proc_status[i] is
-                               not None else None for i in worker_idxs]
+                               not None and proc_status[i]['status']=='active'
+                               else None for i in worker_idxs]
             self.update_time()
             eta = self.eta_estimator.eta(volume_filled_frac)
             overall_status = dict(num_proc_active=num_proc_active,
