@@ -107,7 +107,7 @@ class MainStatusPublisher:
             lists.
         """
         self.total_volume = total_volume
-        self.time = dict(previous=None,total=0.,ecc=0.,lcss=0.)
+        self.time_previous,self.time_total = None,0.
         self.worker_procs = [i for i in range(tools.MPI.size()) if i!=global_vars.SCHEDULER_PROC]  # MPI ranks of worker processes
         
         # Create blank status and statistics files
@@ -128,7 +128,7 @@ class MainStatusPublisher:
         self.status_write_freq = int(status_write_period/call_period)
         self.statistics_save_freq = int(statistics_save_period/call_period)
         
-    def update_time(self,algorithm=None):
+    def update_time(self):
         """
         Updates ``self.time``.
         
@@ -137,13 +137,11 @@ class MainStatusPublisher:
         algorithm: {'ecc','lcss'}, optional
             Which algorithm is being run.
         """
-        if self.time['previous'] is None:
-            self.time['previous'] = time.time()
-        dt = time.time()-self.time['previous']
-        self.time['previous'] += dt
-        self.time['total'] += dt
-        if algorithm is not None:
-            self.time[algorithm] += dt
+        if self.time_previous is None:
+            self.time_previous = time.time()
+        dt = time.time()-self.time_previous
+        self.time_previous += dt
+        self.time_total += dt
     
     def reset_eta(self):
         """Resets memory variables estimation."""
@@ -164,14 +162,6 @@ class MainStatusPublisher:
         force : bool, optional
             ``True`` to force writing both the status and the statistics files.
         """
-        # Determine which algorithm is being executed
-        # All workers should be using the same algorithm, so get it from the
-        # lowest ID worker for which a status is already available
-        which_alg,i = '',0
-        while which_alg=='' and i<len(proc_status):
-            which_alg = proc_status[i]['algorithm']
-            i += 1
-        which_alg = None if which_alg=='' else which_alg
         # Determine if anything is to be done
         self.status_write_counter += 1
         self.statistics_save_counter += 1
@@ -192,20 +182,31 @@ class MainStatusPublisher:
             self.eta_rls_update_counter = 0 # reset
             # Measure the volume filling rate via finite-differencing
             first_call = self.eta_last_measurement is None
-            self.update_time(which_alg)
-            new_measurement = dict(t=self.time['total'],v=volume_filled_frac)
+            self.update_time()
+            new_measurement = dict(t=self.time_total,v=volume_filled_frac)
             if not first_call:
-                rate_measurement = (new_measurement['v']-self.eta_last_measurement['v'])/(new_measurement['t']-self.eta_last_measurement['t'])
+                rate_measurement = (new_measurement['v']-
+                                    self.eta_last_measurement['v'])/(
+                                        new_measurement['t']-
+                                        self.eta_last_measurement['t'])
                 self.eta_estimator.update(rate_measurement)
             self.eta_last_measurement = new_measurement
         # Do the updates, if any
         if force or save_statistics or write_status:
             # Compute overall status
-            num_proc_active = sum([proc_status[i]['status']=='active' for i in worker_idxs if proc_status[i] is not None])
-            num_proc_failed = sum([proc_status[i]['status']=='failed' for i in worker_idxs if proc_status[i] is not None])
-            simplex_count_total = sum([proc_status[i]['simplex_count_total'] for i in worker_idxs if proc_status[i] is not None])
-            time_active_total = sum([proc_status[i]['time_active_total'] for i in worker_idxs if proc_status[i] is not None])
-            self.update_time(which_alg)
+            num_proc_active = sum([proc_status[i]['status']=='active' for i in
+                                   worker_idxs if proc_status[i] is not None])
+            num_proc_failed = sum([proc_status[i]['status']=='failed' for i in
+                                   worker_idxs if proc_status[i] is not None])
+            simplex_count_total = sum(
+                [proc_status[i]['simplex_count_total'] for i in worker_idxs if
+                 proc_status[i] is not None])
+            time_active_total = sum([
+                proc_status[i]['time_active_total'] for i in worker_idxs if
+                proc_status[i] is not None])
+            algorithms_list = [proc_status[i]['algorithm'] if proc_status[i] is
+                               not None else None for i in worker_idxs]
+            self.update_time()
             eta = self.eta_estimator.eta(volume_filled_frac)
             overall_status = dict(num_proc_active=num_proc_active,
                                   num_proc_failed=num_proc_failed,
@@ -213,9 +214,8 @@ class MainStatusPublisher:
                                   volume_filled_total=volume_filled_total,
                                   volume_filled_frac=volume_filled_frac,
                                   simplex_count_total=simplex_count_total,
-                                  time_elapsed=self.time['total'],
-                                  time_ecc=self.time['ecc'],
-                                  time_lcss=self.time['lcss'],
+                                  time_elapsed=self.time_total,
+                                  algorithms_running=algorithms_list,
                                   time_active_total=time_active_total,
                                   eta=eta)
             # Save statistics
@@ -232,10 +232,11 @@ class MainStatusPublisher:
                             'number of tasks queue: %d'%(num_tasks_in_queue),
                             'volume filled (total [%%]): %.4e'%(volume_filled_frac*100.),
                             'simplex_count: %d'%(simplex_count_total),
-                            'time elapsed [s]: %d'%(self.time['total']),
+                            'time elapsed [s]: %d'%(self.time_total),
                             'time active (total for all processes [s]): %.0f'%(time_active_total),
-                            'time running ecc [s]: %d'%(self.time['ecc']),
-                            'time running lcss [s]: %d'%(self.time['lcss']),
+                            'processes: %d x ecc, %d x lcss'%(
+                                sum([alg=='ecc' for alg in algorithms_list]),
+                                sum([alg=='lcss' for alg in algorithms_list])),
                             'ETA [s]: %s'%(str(eta if eta is None else int(eta)))
                             ])+'\n\n')
                     for i in worker_idxs:

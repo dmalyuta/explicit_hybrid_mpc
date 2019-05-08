@@ -64,7 +64,7 @@ class WorkerStatusPublisher:
         self.data['algorithm'] = algorithm
         self.__write()
     
-    def update(self,active=None,failed=False,volume_filled_increment=None,simplex_count_increment=None,location=None):
+    def update(self,active=None,failed=False,volume_filled_increment=None,simplex_count_increment=None,location=None,algorithm=None):
         """
         Update the data.
         
@@ -80,6 +80,8 @@ class WorkerStatusPublisher:
             How many additional simplices added to partition.
         location : str, optional
             Current location in the tree.
+        algorithm : {'ecc','lcss'}
+            Which algorithm is to be run for the partitioning.
         """
         # Update time counters
         dt = time.time()-self.time_previous
@@ -110,6 +112,9 @@ class WorkerStatusPublisher:
         # Update location
         if location is not None:
             self.data['current_location'] = location
+        # Update algorithm
+        if algorithm is not None:
+            self.data['algorithm'] = algorithm
         self.__write()
         
 class Worker:
@@ -161,6 +166,7 @@ class Worker:
             tools.MPI.nonblocking_send(new_task,dest=global_vars.SCHEDULER_PROC,
                                        tag=global_vars.NEW_BRANCH_TAG)
         else:
+            self.status_publisher.update(algorithm=which_alg)
             self.alg_call(which_alg,child,location)
     
     def ecc(self,node,location):
