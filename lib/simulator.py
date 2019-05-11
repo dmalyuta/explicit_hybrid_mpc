@@ -84,30 +84,37 @@ class Simulator:
         """
         self.K = K
         self.G = mpc.plant
-        self.specs = mpc.specs
+        self.uncertain_system = hasattr(mpc,'specs')
+        if self.uncertain_system:
+            self.specs = mpc.specs
         self.T_d = self.G.T_d
         self.T = T
         
         # Noise sampling functions
-        def sampleNoise(noise_type, dim):
-            """
-            Noise sampling function.
-            
-            Parameters
-            ----------
-            noise_type : str
-                Where noise enters the system, should be 'process', 'state' or
-                'input'.
-            dim : int
-                Dimension of the noise vector.
-            """
-            ntype = self.specs.P.type
-            sampler = self.specs.P.sample_sim
-            return lambda t,x,u: sum([sampler[i](t,x,u) for i in range(len(ntype)) if
-                                      ntype[i]==noise_type])+np.zeros(dim)
-        self.process_noise = sampleNoise('process',self.G.d)
-        self.state_estimation_noise = sampleNoise('state',self.G.n)
-        self.input_noise = sampleNoise('input',self.G.m)
+        if self.uncertain_system:
+            def sampleNoise(noise_type, dim):
+                """
+                Noise sampling function.
+                
+                Parameters
+                ----------
+                noise_type : str
+                    Where noise enters the system, should be 'process', 'state' or
+                    'input'.
+                dim : int
+                    Dimension of the noise vector.
+                """
+                ntype = self.specs.P.type
+                sampler = self.specs.P.sample_sim
+                return lambda t,x,u: sum([sampler[i](t,x,u) for i in range(len(ntype)) if
+                                          ntype[i]==noise_type])+np.zeros(dim)
+            self.process_noise = sampleNoise('process',self.G.d)
+            self.state_estimation_noise = sampleNoise('state',self.G.n)
+            self.input_noise = sampleNoise('input',self.G.m)
+        else:
+            self.process_noise = lambda t,x,u: np.zeros(self.G.d)
+            self.state_estimation_noise = lambda t,x,u: np.zeros(self.G.n)
+            self.input_noise = lambda t,x,u: np.zeros(self.G.m)
         
         # Default simulation output data descriptions
         self.sim_history = SimulationOutput()

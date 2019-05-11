@@ -72,7 +72,7 @@ class MPC:
         U_partitions = subtractHyperrectangles(self.specs.U_int,self.specs.U_ext)
         H = [Up.A for Up in U_partitions]
         h = [Up.b for Up in U_partitions]
-        self.Nu = len(H) # Number of convex sets whose union makes the control set (**excluding** the {0} set)
+        self.delta_size = len(H) # Number of convex sets whose union makes the control set (**excluding** the {0} set)
         qq = [(1./(1-1./dep.pq) if dep.pq!=1 else np.inf) for dep in
               self.specs.P.dependency]
         D = self.plant.D(self.specs)
@@ -80,8 +80,8 @@ class MPC:
         # scaling
         D_w = Polytope(self.specs.P.R,self.specs.P.r).computeScalingMatrix()
         self.D_x = self.specs.X.computeScalingMatrix()
-        self.p_u,self.D_u = [None for _ in range(self.Nu)],[None for _ in range(self.Nu)]
-        for i in range(self.Nu):
+        self.p_u,self.D_u = [None for _ in range(self.delta_size)],[None for _ in range(self.delta_size)]
+        for i in range(self.delta_size):
             # Scale to unity and re-center with respect to set {u_i: H[i]*u_i<=h[i]}
             self.p_u[i] = np.mean(Polytope(A=H[i],b=h[i]).V,axis=0) # barycenter
             self.D_u[i] = np.empty(H[i].shape)
@@ -145,8 +145,8 @@ class MPC:
                 (unscaled) states and inputs; 'xhat' and 'uhat' are
                 dimensionless (scaled) states and inputs.
             """
-            uhat = [[cvx.Variable(self.D_u[i].shape[1]) for k in range(self.N)] for i in range(self.Nu)]
-            u = [[self.p_u[i]+self.D_u[i]*uhat[i][k] for k in range(self.N)] for i in range(self.Nu)]
+            uhat = [[cvx.Variable(self.D_u[i].shape[1]) for k in range(self.N)] for i in range(self.delta_size)]
+            u = [[self.p_u[i]+self.D_u[i]*uhat[i][k] for k in range(self.N)] for i in range(self.delta_size)]
             xhat = [cvx.Variable(self.n_x) for k in range(self.N+1)]
             x = [self.D_x*xhat[k] for k in range(self.N+1)]
             variables = dict(u=u,x=x,uhat=uhat,xhat=xhat)
@@ -155,11 +155,10 @@ class MPC:
         self.make_ux = make_ux
             
         self.x0 = cvx.Parameter(self.n_x)
-        self.delta = cvx.Variable(self.Nu*self.N, boolean=True)
+        self.delta = cvx.Variable(self.delta_size*self.N, boolean=True)
         xu = self.make_ux()
         self.u = xu['u']
         self.x = xu['x']
-        xhat = xu['xhat']
         
         def get_u0_value():
             """
@@ -170,21 +169,24 @@ class MPC:
             u0_opt : array
                 Optimal value of the first input in the MPC horizon.
             """
-            return sum([self.u[__i][0].value for __i in range(self.Nu)])
+            return sum([self.u[__i][0].value for __i in range(self.delta_size)])
         
         self.get_u0_value = get_u0_value
         
         Q = Q_coeff*np.eye(self.n_x)
         R = np.eye(self.n_u)
-        self.V = (sum([cvx.quad_form(la.inv(self.D_u_box)*sum([self.u[i][k] for i in range(self.Nu)]),R) for k in range(self.N)])+
-                  sum([cvx.quad_form(xhat[k],Q) for k in tools.fullrange(1,self.N)]))
+        self.V = (sum([cvx.quad_form(la.inv(self.D_u_box)*sum([
+            self.u[i][k] for i in range(self.delta_size)]),R) for k in range(self.N)])+
+                  sum([cvx.quad_form(xu['xhat'][k],Q)
+                       for k in tools.fullrange(1,self.N)]))
         self.cost = cvx.Minimize(self.V)
         
         def make_constraints(theta,x,u,delta,delta_sum_constraint=True):
             constraints = []
             # Nominal dynamics
-            sum_u = lambda k: sum([u[__i][k] for __i in range(self.Nu)])
-            constraints += [x[k+1] == self.plant.A*x[k]+self.plant.B*sum_u(k) for k in range(self.N)]
+            sum_u = lambda k: sum([u[__i][k] for __i in range(self.delta_size)])
+            constraints += [x[k+1] == self.plant.A*x[k]+self.plant.B*sum_u(k)
+                            for k in range(self.N)]
             constraints += [x[0] == theta]
             # Robustness constraint tightening
             G,g,n_g = self.specs.X.A, self.specs.X.b, self.specs.X.b.size
@@ -192,7 +194,8 @@ class MPC:
                             sum_sigma[(k-1)*n_g:k*n_g]+
                             sum([sum([
                             np.array([
-                            la.norm(G[j].dot(mpow(self.plant.A,k-1-i)).dot(D).dot(self.specs.P.L[l]),ord=qq[l])
+                            la.norm(G[j].dot(mpow(self.plant.A,k-1-i)).dot(
+                                D).dot(self.specs.P.L[l]),ord=qq[l])
                             for j in range(n_g)])*
                             self.specs.P.dependency[l].phi_direct(x[i],sum_u(i))
                             for l in range(n_q)])
@@ -200,11 +203,14 @@ class MPC:
                             <=g
                             for k in tools.fullrange(self.N)]
             # Input constraint
-            for i in range(self.Nu):
-                constraints += [H[i]*u[i][k] <= h[i]*delta[self.Nu*k+i] for k in range(self.N)]
+            for i in range(self.delta_size):
+                constraints += [H[i]*u[i][k] <= h[i]*delta[self.delta_size*k+i]
+                                for k in range(self.N)]
             # input is in at least one of the convex subsets
             if delta_sum_constraint:
-                constraints += [sum([delta[self.Nu*k+i] for i in range(self.Nu)]) <= 1 for k in range(self.N)]
+                constraints += [sum([delta[self.delta_size*k+i]
+                                     for i in range(self.delta_size)]) <= 1
+                                for k in range(self.N)]
             return constraints
         
         self.make_constraints = make_constraints
@@ -256,7 +262,7 @@ class SatelliteZ(MPC):
         A = sla.expm(A_c*self.pars['T_s'])
         B = A.dot(B_c)
         M = np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
-        E = sla.expm(M)[:self.n_x,self.n_x:]
+        E = sla.expm(M*self.pars['T_s'])[:self.n_x,self.n_x:]
         self.plant = Plant(self.pars['T_s'],A,B,E)
 
         # Setup the RMPC problem        
@@ -319,7 +325,7 @@ class SatelliteXY(MPC):
         A = sla.expm(A_c*self.pars['T_s'])
         B = A.dot(B_c)
         M = np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
-        E = sla.expm(M)[:self.n_x,self.n_x:]
+        E = sla.expm(M*self.pars['T_s'])[:self.n_x,self.n_x:]
         self.plant = Plant(self.pars['T_s'],A,B,E)
 
         # Setup the RMPC problem        
@@ -390,11 +396,155 @@ class SatelliteXYZ(MPC):
         A = sla.expm(A_c*self.pars['T_s'])
         B = A.dot(B_c)
         M = np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
-        E = sla.expm(M)[:self.n_x,self.n_x:]
+        E = sla.expm(M*self.pars['T_s'])[:self.n_x,self.n_x:]
         self.plant = Plant(self.pars['T_s'],A,B,E)
 
         # Setup the RMPC problem        
         self.setup_RMPC(Q_coeff=1e-2)
+
+class InvertedPendulumOnCart(MPC):
+    """
+    Inverted pendulum on a cart with static and dynamic friction.
+    """
+    def __init__(self):
+        super().__init__()
+        # Parameters
+        self.N = global_vars.MPC_HORIZON # Prediction horizon length
+        # Friction coefficients from
+        # https://www.engineersedge.com/coeffients_of_friction.htm
+        mu_s = 0.16 # Static coefficient of friction (steel on steel)
+        mu_d = 0.03 # Kinetic coefficient of friction (steel on steel)
+        g = 9.81 # [m/s^2] Gravitational acceleration
+        l = 1. # [m] Pendulum rod length
+        m = 0.01 # [kg] Pendulum tip mass
+        M = 1. # [kg] Cart mass
+        rho = m/M
+        T_s = 1/50. # [s] Discretization sampling time
+        Q_coeff = 10000. # State error weight in MPC cost
+        v_eps = 1e-3 # [m/s] Velocity below which to use static friction
+        p_max = 0.01 # [m] Maximum position error
+        v_max = 10#0.5*p_max/T_s # [m/s] Maximum velocity error
+        angle_max = np.deg2rad(1) # [rad] Maximum pendulum off-vertical angle
+        rate_max = 0.5*angle_max/T_s # [rad/s] Maximum pendulum angular rate
+        F_max = 100 # [N] Maximum input force
+        self.Theta = Polytope(R=[(-p_max,p_max),(-angle_max,angle_max),
+                                 (-v_max,v_max),(-rate_max,rate_max)])
+
+        # Make plant
+        # continuous-time
+        self.n_x, self.n_u = 4,1
+        A_c = np.array([[0,0,1,0],
+                        [0,0,0,1],
+                        [0,-g*rho,0,0],
+                        [0,g*(1+rho)/l,0,0]])
+        B_c = np.array([[0],[0],[rho/m],[-rho/(m*l)]])
+        # discrete-time
+        A = sla.expm(A_c*T_s)
+        M = np.block([[A_c,B_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
+        B = sla.expm(M)[:self.n_x,self.n_x:]
+        E = B.copy()
+        self.plant = Plant(T_s,A,B,E)
+
+        # Setup MPC optimization problem
+        self.D_x = np.diag([p_max,angle_max,v_max,rate_max])
+        self.D_u = F_max
+
+        def make_ux():
+            """
+            Make input and state optimization variables.
+            
+            Returns
+            -------
+            variables : list
+                Dictionary of variable lists. 'x' amd 'u' are dimensional
+                (unscaled) states and inputs; 'xhat' and 'uhat' are
+                dimensionless (scaled) states and inputs.
+            """
+            uhat = [cvx.Variable(self.n_u) for k in range(self.N)]
+            u = [self.D_u*uhat[k] for k in range(self.N)]
+            xhat = [cvx.Variable(self.n_x) for k in range(self.N+1)]
+            x = [self.D_x*xhat[k] for k in range(self.N+1)]
+            variables = dict(u=u,x=x,uhat=uhat,xhat=xhat)
+            return variables
+
+        self.make_ux = make_ux
+
+        self.x0 = cvx.Parameter(self.n_x)
+        self.delta_size = 7 # Commutation dimension (at each time step)
+        self.delta = cvx.Variable(self.delta_size*self.N, boolean=True)
+        xu = self.make_ux()
+        self.u = xu['u']
+        self.x = xu['x']
+
+        def get_u0_value():
+            """
+            Get the optimal value of the first input in the MPC horizon.
+            
+            Returns
+            -------
+            u0_opt : array
+                Optimal value of the first input in the MPC horizon.
+            """
+            return self.u[0].value
+
+        self.get_u0_value = get_u0_value
+
+        Q = Q_coeff*np.diag([1,1.,0,0])#np.eye(self.n_x)
+        R = np.eye(self.n_u)
+        self.V = (#sum([cvx.quad_form(xu['uhat'][k],R) for k in range(self.N)])+
+                  sum([cvx.quad_form(xu['xhat'][k],Q)
+                       for k in tools.fullrange(1,self.N)]))
+        self.cost = cvx.Minimize(self.V)
+
+        def make_constraints(theta,x,u,delta,delta_sum_constraint=True):
+            constraints = []
+            # Separate the boolean variables
+            z = [[delta[k*self.delta_size+i] for i in [0,1,2]]
+                 for k in range(self.N)]
+            w = [[delta[k*self.delta_size+i] for i in [3,4]]
+                 for k in range(self.N)]
+            q = [[delta[k*self.delta_size+i] for i in [5,6]]
+                 for k in range(self.N)]
+            # Friction logic
+#            constraints += [q[k][0] >= z[k][2]+w[k][0]-1 for k in range(self.N)]
+#            constraints += [q[k][0] <= z[k][2] for k in range(self.N)]
+#            constraints += [q[k][0] <= w[k][0] for k in range(self.N)]
+#            constraints += [q[k][1] >= z[k][2]+w[k][1]-1 for k in range(self.N)]
+#            constraints += [q[k][1] <= z[k][2] for k in range(self.N)]
+#            constraints += [q[k][1] <= w[k][1] for k in range(self.N)]
+#            constraints += [x[k+1][2] <= -v_eps*z[k][0]+v_max*(1-z[k][0])
+#                            for k in range(self.N)]
+#            constraints += [x[k+1][2] >= v_eps*z[k][1]-v_max*(1-z[k][1])
+#                            for k in range(self.N)]
+#            constraints += [-v_max*(1-z[k][2])-v_eps*z[k][2] <= x[k+1][2]
+#                            for k in range(self.N)]
+#            constraints += [x[k+1][2] <= v_eps*z[k][2]+v_max*(1-z[k][2])
+#                            for k in range(self.N)]
+#            constraints += [u[k] >= (M+m)*g*mu_s*w[k][0]-F_max*(1-w[k][0])
+#                            for k in range(self.N)]
+#            constraints += [u[k] <= -(M+m)*g*mu_s*w[k][1]+F_max*(1-w[k][1])
+#                            for k in range(self.N)]
+#            friction = [
+#                q[k][0]*np.array([0,0,-mu_s*g*(1+rho),mu_s*g*(1+rho)/l])+
+#                q[k][1]*np.array([0,0,mu_s*g*(1+rho),-mu_s*g*(1+rho)/l])+
+#                z[k][0]*np.array([0,0,mu_d*g*(1+rho),-mu_d*g*(1+rho)/l])+
+#                z[k][0]*np.array([0,0,-mu_d*g*(1+rho),mu_d*g*(1+rho)/l])
+#                for k in range(self.N)]
+#            if delta_sum_constraint:
+#                constraints += [sum(z[k]) == 1 for k in range(self.N)]
+#                constraints += [sum(w[k]) == z[k][2] for k in range(self.N)]
+            # Dynamics
+            constraints += [
+                x[k+1] == self.plant.A*x[k]+self.plant.B*u[k]#+friction[k]
+                for k in range(self.N)]
+            constraints += [x[0] == theta]
+#            constraints += [x[-1] == 0]
+            # Input constraint
+            constraints += [u[k] <= F_max for k in range(self.N)]
+            constraints += [u[k] >= -F_max for k in range(self.N)]
+            return constraints
+            
+        self.make_constraints = make_constraints
 
 class ExplicitMPC:
     def __init__(self,tree):

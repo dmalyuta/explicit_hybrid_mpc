@@ -43,7 +43,7 @@ class Oracle:
         self.minlp_feasibility = cvx.Problem(cvx.Minimize(0),constraints)
         
         # Make P_theta_delta, the fixed-commutation NLP
-        self.delta_fixed = cvx.Parameter(self.mpc.Nu*self.mpc.N)
+        self.delta_fixed = cvx.Parameter(self.mpc.delta_size*self.mpc.N)
         constraints = self.mpc.make_constraints(self.mpc.x0,self.mpc.x,
                                                 self.mpc.u,self.delta_fixed)
         self.nlp = cvx.Problem(self.mpc.cost,constraints)
@@ -282,13 +282,13 @@ class Oracle:
             except:
                 # Not feasible at some vertex -> solver must have returned an
                 # infeasible solution for bar_D_delta_R (numerical troubles)
-                delta_offset = cvx.Variable(self.mpc.Nu*self.mpc.N,
+                delta_offset = cvx.Variable(self.mpc.delta_size*self.mpc.N,
                                             boolean=True)
                 delta_neq_other_deltas += [
-                    self.mpc.delta[self.mpc.Nu*k+i]==delta_star[
-                        self.mpc.Nu*k+i]+(1-2*delta_star[self.mpc.Nu*k+i])*
-                    delta_offset[self.mpc.Nu*k+i]
-                    for k in range(self.mpc.N) for i in range(self.mpc.Nu)]
+                    self.mpc.delta[self.mpc.delta_size*k+i]==delta_star[
+                        self.mpc.delta_size*k+i]+(1-2*delta_star[self.mpc.delta_size*k+i])*
+                    delta_offset[self.mpc.delta_size*k+i]
+                    for k in range(self.mpc.N) for i in range(self.mpc.delta_size)]
                 delta_neq_other_deltas += [
-                    sum([delta_offset[self.mpc.Nu*k+i] for k in
-                         range(self.mpc.N) for i in range(self.mpc.Nu)])>=1]
+                    sum([delta_offset[self.mpc.delta_size*k+i] for k in
+                         range(self.mpc.N) for i in range(self.mpc.delta_size)])>=1]
