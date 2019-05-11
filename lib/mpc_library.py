@@ -8,8 +8,10 @@ Copyright 2019 University of Washington. All rights reserved.
 """
 
 import time
+import pickle
 import numpy as np
 import numpy.linalg as la
+import scipy.linalg as sla
 from numpy.linalg import matrix_power as mpow
 import scipy.linalg as sla
 import cvxpy as cvx
@@ -403,52 +405,72 @@ class SatelliteXYZ(MPC):
         self.setup_RMPC(Q_coeff=1e-2)
 
 class InvertedPendulumOnCart(MPC):
-    """
-    Inverted pendulum on a cart with static and dynamic friction.
-    """
+    """Inverted pendulum on a cart with static and kinetic friction."""
     def __init__(self):
         super().__init__()
         # Parameters
         self.N = global_vars.MPC_HORIZON # Prediction horizon length
-        # Friction coefficients from
-        # https://www.engineersedge.com/coeffients_of_friction.htm
-        mu_s = 0.16 # Static coefficient of friction (steel on steel)
-        mu_d = 0.03 # Kinetic coefficient of friction (steel on steel)
-        g = 9.81 # [m/s^2] Gravitational acceleration
-        l = 1. # [m] Pendulum rod length
-        m = 0.01 # [kg] Pendulum tip mass
-        M = 1. # [kg] Cart mass
-        rho = m/M
-        T_s = 1/50. # [s] Discretization sampling time
-        Q_coeff = 10000. # State error weight in MPC cost
-        v_eps = 1e-3 # [m/s] Velocity below which to use static friction
-        p_max = 0.01 # [m] Maximum position error
-        v_max = 10#0.5*p_max/T_s # [m/s] Maximum velocity error
-        angle_max = np.deg2rad(1) # [rad] Maximum pendulum off-vertical angle
-        rate_max = 0.5*angle_max/T_s # [rad/s] Maximum pendulum angular rate
-        F_max = 100 # [N] Maximum input force
-        self.Theta = Polytope(R=[(-p_max,p_max),(-angle_max,angle_max),
+        with open('sage/pendulum_parameters.pkl','rb') as f:
+            pars = pickle.load(f,encoding='latin1') # Python 2 pickle
+        g = pars['g']
+        l = pars['l']
+        m = pars['m']
+        M = pars['M']
+        v_eps = pars['v_eps']
+        a_eps = pars['a_eps']
+        T_s = pars['T_s']
+
+        # Get the linearized (continuous-time) system
+        with open('sage/pendulum_linearization.pkl','rb') as f:
+            lin_map = pickle.load(f,encoding='latin1') # Python 2 pickle
+        opt = lambda i: 'opt%d'%(i+1)
+        num_opts = len(lin_map.keys())
+        A_c = [lin_map[opt(i)]['A'] for i in range(num_opts)]
+        B_c = [lin_map[opt(i)]['B'] for i in range(num_opts)]
+        w_c = [lin_map[opt(i)]['w'] for i in range(num_opts)]
+
+        # Discretization
+        self.n_x,self.n_u = 4,1
+        A = [None]*num_opts
+        B = [None]*num_opts
+        w = [None]*num_opts
+        for i in range(len(lin_map.keys())):
+            A[i] = sla.expm(A_c[i]*T_s)
+            H = np.block([[A_c[i],np.array([B_c[i]]).T],
+                          [np.zeros((self.n_u,self.n_x+self.n_u))]])
+            B[i] = sla.expm(H*T_s)[:self.n_x,self.n_x:]
+            H = np.block([[A_c[i],np.eye(self.n_x)],
+                          [np.zeros((self.n_x,2*self.n_x))]])
+            w[i] = sla.expm(H*T_s)[:self.n_x,self.n_x:].dot(w_c[i])
+
+        # DLQR design to obtain the terminal weight
+        A_lqr = np.array([[0,0,1,0],[0,0,0,1],[0,-m*g/M,0,0],[0,g/l*(1+m/M),0,0]])
+        B_lqr = np.array([0,0,1/M,-1/(M*l)])
+        A_dlqr = sla.expm(A_lqr*T_s)
+        H = np.block([[A_lqr,np.array([B_lqr]).T],
+                      [np.zeros((self.n_u,self.n_x+self.n_u))]])
+        B_dlqr = sla.expm(H*T_s)[:self.n_x,self.n_x:].flatten()
+        
+        p_max = 0.1 # [m] Max position error
+        v_max = 0.05 # [m/s] Max velocity error
+        a_max = 10 # [m/s^2] Max acceleration
+        ang_max = np.deg2rad(5) # [rad] Max pendulum angle error
+        rate_max = np.deg2rad(20) # [rad/s] Max pendulum swing rate error
+        F_max = 50 # [N] Max control force
+        bigM = 10*np.array([p_max,ang_max,v_max,rate_max])
+        self.D_x = np.diag([p_max,ang_max,v_max,rate_max])
+        self.D_u = np.diag([F_max])
+        self.Theta = Polytope(R=[(-p_max,p_max),(-ang_max,ang_max),
                                  (-v_max,v_max),(-rate_max,rate_max)])
 
-        # Make plant
-        # continuous-time
-        self.n_x, self.n_u = 4,1
-        A_c = np.array([[0,0,1,0],
-                        [0,0,0,1],
-                        [0,-g*rho,0,0],
-                        [0,g*(1+rho)/l,0,0]])
-        B_c = np.array([[0],[0],[rho/m],[-rho/(m*l)]])
-        # discrete-time
-        A = sla.expm(A_c*T_s)
-        M = np.block([[A_c,B_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
-        B = sla.expm(M)[:self.n_x,self.n_x:]
-        E = B.copy()
-        self.plant = Plant(T_s,A,B,E)
+        Qhat = np.diag([1,1,10,10]) # Scaled state penalty
+        Rhat = 1000*np.eye(1) # Scaled input penalty
+        Q = la.inv(self.D_x).T.dot(Qhat).dot(la.inv(self.D_x))
+        R = la.inv(self.D_u).T.dot(Rhat).dot(la.inv(self.D_u))
 
-        # Setup MPC optimization problem
-        self.D_x = np.diag([p_max,angle_max,v_max,rate_max])
-        self.D_u = F_max
+        P = sla.solve_discrete_are(A_dlqr,np.array([B_dlqr]).T,Q,R)
 
+        # Optimization variables
         def make_ux():
             """
             Make input and state optimization variables.
@@ -470,12 +492,12 @@ class InvertedPendulumOnCart(MPC):
         self.make_ux = make_ux
 
         self.x0 = cvx.Parameter(self.n_x)
-        self.delta_size = 7 # Commutation dimension (at each time step)
+        self.delta_size = 5 # Commutation dimension (at each time step)
         self.delta = cvx.Variable(self.delta_size*self.N, boolean=True)
         xu = self.make_ux()
         self.u = xu['u']
         self.x = xu['x']
-
+        
         def get_u0_value():
             """
             Get the optimal value of the first input in the MPC horizon.
@@ -486,64 +508,49 @@ class InvertedPendulumOnCart(MPC):
                 Optimal value of the first input in the MPC horizon.
             """
             return self.u[0].value
-
+        
         self.get_u0_value = get_u0_value
 
-        Q = Q_coeff*np.diag([1,1.,0,0])#np.eye(self.n_x)
-        R = np.eye(self.n_u)
-        self.V = (#sum([cvx.quad_form(xu['uhat'][k],R) for k in range(self.N)])+
-                  sum([cvx.quad_form(xu['xhat'][k],Q)
-                       for k in tools.fullrange(1,self.N)]))
+        # Cost
+        self.V = sum([cvx.quad_form(self.u[k],R)for k in range(self.N)])+sum([
+            cvx.quad_form(self.x[k],Q)
+            for k in range(1,self.N)])+cvx.quad_form(self.x[-1],P)
         self.cost = cvx.Minimize(self.V)
 
+        # Constraints
         def make_constraints(theta,x,u,delta,delta_sum_constraint=True):
             constraints = []
-            # Separate the boolean variables
-            z = [[delta[k*self.delta_size+i] for i in [0,1,2]]
+            # Separate the boolean variables into cases
+            z = [[delta[k*self.N+i] for i in range(self.delta_size)]
                  for k in range(self.N)]
-            w = [[delta[k*self.delta_size+i] for i in [3,4]]
-                 for k in range(self.N)]
-            q = [[delta[k*self.delta_size+i] for i in [5,6]]
-                 for k in range(self.N)]
-            # Friction logic
-#            constraints += [q[k][0] >= z[k][2]+w[k][0]-1 for k in range(self.N)]
-#            constraints += [q[k][0] <= z[k][2] for k in range(self.N)]
-#            constraints += [q[k][0] <= w[k][0] for k in range(self.N)]
-#            constraints += [q[k][1] >= z[k][2]+w[k][1]-1 for k in range(self.N)]
-#            constraints += [q[k][1] <= z[k][2] for k in range(self.N)]
-#            constraints += [q[k][1] <= w[k][1] for k in range(self.N)]
-#            constraints += [x[k+1][2] <= -v_eps*z[k][0]+v_max*(1-z[k][0])
-#                            for k in range(self.N)]
-#            constraints += [x[k+1][2] >= v_eps*z[k][1]-v_max*(1-z[k][1])
-#                            for k in range(self.N)]
-#            constraints += [-v_max*(1-z[k][2])-v_eps*z[k][2] <= x[k+1][2]
-#                            for k in range(self.N)]
-#            constraints += [x[k+1][2] <= v_eps*z[k][2]+v_max*(1-z[k][2])
-#                            for k in range(self.N)]
-#            constraints += [u[k] >= (M+m)*g*mu_s*w[k][0]-F_max*(1-w[k][0])
-#                            for k in range(self.N)]
-#            constraints += [u[k] <= -(M+m)*g*mu_s*w[k][1]+F_max*(1-w[k][1])
-#                            for k in range(self.N)]
-#            friction = [
-#                q[k][0]*np.array([0,0,-mu_s*g*(1+rho),mu_s*g*(1+rho)/l])+
-#                q[k][1]*np.array([0,0,mu_s*g*(1+rho),-mu_s*g*(1+rho)/l])+
-#                z[k][0]*np.array([0,0,mu_d*g*(1+rho),-mu_d*g*(1+rho)/l])+
-#                z[k][0]*np.array([0,0,-mu_d*g*(1+rho),mu_d*g*(1+rho)/l])
-#                for k in range(self.N)]
-#            if delta_sum_constraint:
-#                constraints += [sum(z[k]) == 1 for k in range(self.N)]
-#                constraints += [sum(w[k]) == z[k][2] for k in range(self.N)]
+            if delta_sum_constraint:
+                constraints += [sum(z[k])==1 for k in range(self.N)]
             # Dynamics
-            constraints += [
-                x[k+1] == self.plant.A*x[k]+self.plant.B*u[k]#+friction[k]
-                for k in range(self.N)]
-            constraints += [x[0] == theta]
-#            constraints += [x[-1] == 0]
-            # Input constraint
-            constraints += [u[k] <= F_max for k in range(self.N)]
-            constraints += [u[k] >= -F_max for k in range(self.N)]
+            constraints += [x[0]==self.x0]
+            for i in range(num_opts):
+                constraints += [x[k+1]<=A[i]*x[k]+B[i]*u[k]+w[i]+
+                                bigM*(1-z[k][i]) for k in range(self.N)]
+                constraints += [x[k+1]>=A[i]*x[k]+B[i]*u[k]+w[i]-
+                                bigM*(1-z[k][i]) for k in range(self.N)]
+            # Enforce conditions for each friction case
+            for k in range(self.N):
+                constraints += [x[k][2]>=v_eps*z[k][0]-bigM[2]*(1-z[k][0])]
+                constraints += [x[k][2]<=-v_eps*z[k][1]+bigM[2]*(1-z[k][1])]
+                sum_z_k_234 = sum([z[k][i] for i in [2,3,4]])
+                constraints += [x[k][2]<=v_eps*sum_z_k_234+bigM[2]*(1-sum_z_k_234)]
+                constraints += [x[k][2]>=-v_eps*sum_z_k_234-bigM[2]*(1-sum_z_k_234)]
+                accel_k_opt3 = A_c[2][2]*x[k]+B_c[2][2]*u[k]+w_c[2][2]
+                constraints += [accel_k_opt3>=a_eps*z[k][2]-a_max*(1-z[k][2])]
+                accel_k_opt4 = A_c[3][2]*x[k]+B_c[3][2]*u[k]+w_c[3][2]
+                constraints += [accel_k_opt4<=-a_eps*z[k][3]+a_max*(1-z[k][3])]
+                accel_k_opt5 = A_c[4][2]*x[k]+B_c[4][2]*u[k]+w_c[4][2]
+                constraints += [accel_k_opt5>=-a_eps*z[k][4]-a_max*(1-z[k][4])]
+                constraints += [accel_k_opt5<=a_eps*z[k][4]+a_max*(1-z[k][4])]
+            # Input constraints
+            constraints += [u[k] <= F_max]
+            constraints += [u[k] >= -F_max]
             return constraints
-            
+
         self.make_constraints = make_constraints
 
 class ExplicitMPC:
@@ -701,3 +708,4 @@ def satellite_parameters():
     pars.update({'delta_v_min': pars['delta_v_max']*0.01}) # [m/s] Min non-zero delta-v input (in each axis)
     pars.update({'sigma_rcs': np.tan(np.deg2rad(pars['input_ang_err'])/2.)}) # Input error growth slope with input magnitude
     return pars
+

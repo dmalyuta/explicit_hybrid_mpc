@@ -197,47 +197,57 @@ def example(*args,**kwargs):
     else:
         raise ValueError('Unknown example (%s)'%(global_vars.EXAMPLE))
 
+#%% Test code for pendulum
+
 import cvxpy as cvx
 
-global_vars.MPC_HORIZON = 10
-#global_vars.SOLVER_OPTIONS = dict(solver=cvx.ECOS, verbose=False)
+global_vars.MPC_HORIZON = 4
+global_vars.SOLVER_OPTIONS['verbose'] = False
 full_set, partition, oracle = pendulum_example()
 
-#print(oracle.P_theta(np.array([0.1,0,0,0])))
-#import sys
-#sys.exit()
-
-from simulator import Simulator
-
-plant = mpc_library.InvertedPendulumOnCart()
-def mpc(x):
-    u,_,_,t = oracle.P_theta(x)
-    print(x,u)
-    return u,t
-x_init = np.array([0.1,0,0,0])
-T = 1 # [s] Simulation duration
-simulator = Simulator(mpc,plant,T)
-simout = simulator.run(x_init,label='pendulum')
-
-#%%
-
-import numpy.linalg as la
-import matplotlib.pyplot as plt
-
-fig = plt.figure(1)
-plt.clf()
-ax = fig.add_subplot(111)
-ax.plot(simout.t,la.norm(simout.u,axis=0),
-        color='orange',linestyle='none',marker='.',markersize=10)
-ax.set_xlabel('Time [s]')
-ax.set_ylabel('Input norm')
-ax.set_xlim([0,simout.t[-1]])
-plt.tight_layout()
-plt.show(block=False)
-
-fig = plt.figure(2)
-plt.clf()
-ax = fig.add_subplot(111)
-ax.plot(simout.t,simout.x[0])
-ax.plot(simout.t,simout.x[1])
-ax.plot(simout.t,simout.x[2])
+# =============================================================================
+# import cvxpy as cvx
+# 
+# global_vars.MPC_HORIZON = 10
+# #global_vars.SOLVER_OPTIONS = dict(solver=cvx.ECOS, verbose=False)
+# full_set, partition, oracle = pendulum_example()
+# 
+# #print(oracle.P_theta(np.array([0.1,0,0,0])))
+# #import sys
+# #sys.exit()
+# 
+# from simulator import Simulator
+# 
+# plant = mpc_library.InvertedPendulumOnCart()
+# def mpc(x):
+#     u,_,_,t = oracle.P_theta(x)
+#     print(x,u)
+#     return u,t
+# x_init = np.array([0.1,0,0,0])
+# T = 1 # [s] Simulation duration
+# simulator = Simulator(mpc,plant,T)
+# simout = simulator.run(x_init,label='pendulum')
+# 
+# #%%
+# 
+# import numpy.linalg as la
+# import matplotlib.pyplot as plt
+# 
+# fig = plt.figure(1)
+# plt.clf()
+# ax = fig.add_subplot(111)
+# ax.plot(simout.t,la.norm(simout.u,axis=0),
+#         color='orange',linestyle='none',marker='.',markersize=10)
+# ax.set_xlabel('Time [s]')
+# ax.set_ylabel('Input norm')
+# ax.set_xlim([0,simout.t[-1]])
+# plt.tight_layout()
+# plt.show(block=False)
+# 
+# fig = plt.figure(2)
+# plt.clf()
+# ax = fig.add_subplot(111)
+# ax.plot(simout.t,simout.x[0])
+# ax.plot(simout.t,simout.x[1])
+# ax.plot(simout.t,simout.x[2])
+# =============================================================================
