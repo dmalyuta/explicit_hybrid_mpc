@@ -75,11 +75,8 @@ class MPICommunicator:
         overflow = self.async_send_counter>global_vars.MAX_ASYNC_SEND
         if self.async_send_counter>global_vars.MAX_ASYNC_SEND:
             # wait for matching receive to post
-            error_print('waiting...')
             self.req.wait()
-            error_print('done waiting')
             self.async_send_counter = 0 # reset
-        error_print('counter = %d'%(self.async_send_counter))
         self.req = self.nonblocking_send(*args,**kwargs)
         return self.req
             
