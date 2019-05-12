@@ -26,15 +26,16 @@ def pendulum_parameters():
     pars : dict
         Dictionary of parameters.
     """
-    pars = dict(mu_s = 0.1, # Static coefficient of friction (steel on steel)
-                mu_d = 0.005, # Kinetic coefficient of friction (steel on steel)
+    pars = dict(mu_s = 0.16, # Static coefficient of friction (steel on steel)
+                mu_d = 0.03, # Kinetic coefficient of friction (steel on steel)
                 g = 9.81, # [m/s^2] Gravitational acceleration
                 l = 3., # [m] Pendulum rod length
                 m = 0.3, # [kg] Pendulum tip mass
                 M = 1., # [kg] Cart mass
                 v_eps = 1e-3, # [m/s] Velocity below which to use static friction
                 a_eps = 1e-3, # [m/s^2] Acceleration below which static friction dominates
-                T_s = 1/10.) # [s] Discretization sampling time
+                T_s = 1/10., # [s] Discretization sampling time
+                T_s_plant = 1/100.) # [s] Pendulum dynamics discretization period (for simulation)
     with open('sage/pendulum_parameters.pkl','wb') as f:
         pickle.dump(pars,f)
     return pars

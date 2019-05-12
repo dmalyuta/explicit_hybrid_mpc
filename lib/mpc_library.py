@@ -21,7 +21,7 @@ import tools
 from polytope import Polytope,subtractHyperrectangles
 import uncertainty_sets as uc
 from specifications import Specifications
-from plant import Plant
+from plant import LinearPlant, NonlinearPlant
 
 """
 All MPC classes provide access to the following variables:
@@ -227,6 +227,7 @@ class SatelliteZ(MPC):
         # Parameters
         self.N = global_vars.MPC_HORIZON # Prediction horizon length
         self.pars = satellite_parameters()
+        self.T_s = self.pars['T_s']
         
         # Specifications
         X = Polytope(R=[(-self.pars['pos_err_max'],self.pars['pos_err_max']),
@@ -261,11 +262,11 @@ class SatelliteZ(MPC):
         B_c = np.array([[0.],[1.]])
         E_c = B_c.copy()
         # discrete-time
-        A = sla.expm(A_c*self.pars['T_s'])
+        A = sla.expm(A_c*self.T_s)
         B = A.dot(B_c)
         M = np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
-        E = sla.expm(M*self.pars['T_s'])[:self.n_x,self.n_x:]
-        self.plant = Plant(self.pars['T_s'],A,B,E)
+        E = sla.expm(M*self.T_s)[:self.n_x,self.n_x:]
+        self.plant = LinearPlant(self.T_s,A,B,E)
 
         # Setup the RMPC problem        
         self.setup_RMPC(Q_coeff=1e-2)
@@ -280,6 +281,7 @@ class SatelliteXY(MPC):
         # Parameters
         self.N = global_vars.MPC_HORIZON # Prediction horizon length
         self.pars = satellite_parameters()
+        self.T_s = self.pars['T_s']
         
         # Specifications
         X = Polytope(R=[(-self.pars['pos_err_max'],self.pars['pos_err_max']),
@@ -324,11 +326,11 @@ class SatelliteXY(MPC):
                         [0.,1.]])
         E_c = B_c.copy()
         # discrete-time
-        A = sla.expm(A_c*self.pars['T_s'])
+        A = sla.expm(A_c*self.T_s)
         B = A.dot(B_c)
         M = np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
-        E = sla.expm(M*self.pars['T_s'])[:self.n_x,self.n_x:]
-        self.plant = Plant(self.pars['T_s'],A,B,E)
+        E = sla.expm(M*self.T_s)[:self.n_x,self.n_x:]
+        self.plant = LinearPlant(self.T_s,A,B,E)
 
         # Setup the RMPC problem        
         self.setup_RMPC(Q_coeff=1e-2)
@@ -343,6 +345,7 @@ class SatelliteXYZ(MPC):
         # Parameters
         self.N = global_vars.MPC_HORIZON # Prediction horizon length
         self.pars = satellite_parameters()
+        self.T_s = self.pars['T_s']
         
         # Specifications
         X = Polytope(R=[(-self.pars['pos_err_max'],self.pars['pos_err_max']),
@@ -395,11 +398,11 @@ class SatelliteXYZ(MPC):
                         [0.,0.,1.]])
         E_c = B_c.copy()
         # discrete-time
-        A = sla.expm(A_c*self.pars['T_s'])
+        A = sla.expm(A_c*self.T_s)
         B = A.dot(B_c)
         M = np.block([[A_c,E_c],[np.zeros((self.n_u,self.n_x+self.n_u))]])
-        E = sla.expm(M*self.pars['T_s'])[:self.n_x,self.n_x:]
-        self.plant = Plant(self.pars['T_s'],A,B,E)
+        E = sla.expm(M*self.T_s)[:self.n_x,self.n_x:]
+        self.plant = LinearPlant(self.T_s,A,B,E)
 
         # Setup the RMPC problem        
         self.setup_RMPC(Q_coeff=1e-2)
@@ -410,61 +413,58 @@ class InvertedPendulumOnCart(MPC):
         super().__init__()
         # Parameters
         self.N = global_vars.MPC_HORIZON # Prediction horizon length
-        with open('sage/pendulum_parameters.pkl','rb') as f:
+        with open(global_vars.PROJECT_DIR+
+                  '/lib/sage/pendulum_parameters.pkl','rb') as f:
             pars = pickle.load(f,encoding='latin1') # Python 2 pickle
         g = pars['g']
         l = pars['l']
         m = pars['m']
         M = pars['M']
-        v_eps = pars['v_eps']
-        a_eps = pars['a_eps']
-        T_s = pars['T_s']
+        self.v_eps = pars['v_eps']
+        self.a_eps = pars['a_eps']
+        self.T_s = pars['T_s']
 
         # Get the linearized (continuous-time) system
-        with open('sage/pendulum_linearization.pkl','rb') as f:
-            lin_map = pickle.load(f,encoding='latin1') # Python 2 pickle
+        with open(global_vars.PROJECT_DIR+
+                  '/lib/sage/pendulum_linearization.pkl','rb') as f:
+            self.lin_map = pickle.load(f,encoding='latin1') # Python 2 pickle
         opt = lambda i: 'opt%d'%(i+1)
-        num_opts = len(lin_map.keys())
-        A_c = [lin_map[opt(i)]['A'] for i in range(num_opts)]
-        B_c = [lin_map[opt(i)]['B'] for i in range(num_opts)]
-        w_c = [lin_map[opt(i)]['w'] for i in range(num_opts)]
-
+        self.num_opts = len(self.lin_map.keys())
+        self.A_c = [self.lin_map[opt(i)]['A'] for i in range(self.num_opts)]
+        self.B_c = [self.lin_map[opt(i)]['B'] for i in range(self.num_opts)]
+        self.w_c = [self.lin_map[opt(i)]['w'] for i in range(self.num_opts)]
+        
         # Discretization
         self.n_x,self.n_u = 4,1
-        A = [None]*num_opts
-        B = [None]*num_opts
-        w = [None]*num_opts
-        for i in range(len(lin_map.keys())):
-            A[i] = sla.expm(A_c[i]*T_s)
-            H = np.block([[A_c[i],np.array([B_c[i]]).T],
-                          [np.zeros((self.n_u,self.n_x+self.n_u))]])
-            B[i] = sla.expm(H*T_s)[:self.n_x,self.n_x:]
-            H = np.block([[A_c[i],np.eye(self.n_x)],
-                          [np.zeros((self.n_x,2*self.n_x))]])
-            w[i] = sla.expm(H*T_s)[:self.n_x,self.n_x:].dot(w_c[i])
+        A,B,w = self.discrete_plant(self.T_s)
+        self.create_plant_dynamics()
 
         # DLQR design to obtain the terminal weight
         A_lqr = np.array([[0,0,1,0],[0,0,0,1],[0,-m*g/M,0,0],[0,g/l*(1+m/M),0,0]])
         B_lqr = np.array([0,0,1/M,-1/(M*l)])
-        A_dlqr = sla.expm(A_lqr*T_s)
+        A_dlqr = sla.expm(A_lqr*self.T_s)
         H = np.block([[A_lqr,np.array([B_lqr]).T],
                       [np.zeros((self.n_u,self.n_x+self.n_u))]])
-        B_dlqr = sla.expm(H*T_s)[:self.n_x,self.n_x:].flatten()
+        B_dlqr = sla.expm(H*self.T_s)[:self.n_x,self.n_x:].flatten()
         
-        p_max = 0.1 # [m] Max position error
-        v_max = 0.05 # [m/s] Max velocity error
-        a_max = 10 # [m/s^2] Max acceleration
-        ang_max = np.deg2rad(5) # [rad] Max pendulum angle error
-        rate_max = np.deg2rad(20) # [rad/s] Max pendulum swing rate error
-        F_max = 50 # [N] Max control force
-        bigM = 10*np.array([p_max,ang_max,v_max,rate_max])
-        self.D_x = np.diag([p_max,ang_max,v_max,rate_max])
-        self.D_u = np.diag([F_max])
-        self.Theta = Polytope(R=[(-p_max,p_max),(-ang_max,ang_max),
-                                 (-v_max,v_max),(-rate_max,rate_max)])
+        p_max = 1 # [m] Position scaling
+        v_max = 1 # [m/s] Velocity scaling
+        a_max = 30 # [m/s^2] Max acceleration
+        ang_max = np.deg2rad(10) # [rad] Pendulum angle scaling
+        rate_max = np.deg2rad(50) # [rad/s] Pendulum swing rate scaling
+        F_max = 20 # [N] Max control force
+        bigM = np.array([p_max,ang_max,v_max,rate_max])
 
-        Qhat = np.diag([1,1,10,10]) # Scaled state penalty
-        Rhat = 1000*np.eye(1) # Scaled input penalty
+        # The set that will be partitioned
+        self.p_err = 0.1 # [m] Max position error
+        self.v_err = 0.1 # [m/s] Max velocity error
+        self.ang_err = np.deg2rad(1) # [rad] Max pendulum angle error
+        self.rate_err = np.deg2rad(5) # [rad/s] Max pendulum swing rate error
+        self.D_x = np.diag([self.p_err,self.ang_err,self.v_err,self.rate_err])
+        self.D_u = np.diag([F_max])
+
+        Qhat = np.diag([0.1,1,1,10]) # Scaled state penalty
+        Rhat = np.eye(1) # Scaled input penalty
         Q = la.inv(self.D_x).T.dot(Qhat).dot(la.inv(self.D_x))
         R = la.inv(self.D_u).T.dot(Rhat).dot(la.inv(self.D_u))
 
@@ -526,32 +526,137 @@ class InvertedPendulumOnCart(MPC):
             if delta_sum_constraint:
                 constraints += [sum(z[k])==1 for k in range(self.N)]
             # Dynamics
-            constraints += [x[0]==self.x0]
-            for i in range(num_opts):
+            constraints += [x[0]==theta]
+            for i in range(self.num_opts):
                 constraints += [x[k+1]<=A[i]*x[k]+B[i]*u[k]+w[i]+
                                 bigM*(1-z[k][i]) for k in range(self.N)]
                 constraints += [x[k+1]>=A[i]*x[k]+B[i]*u[k]+w[i]-
                                 bigM*(1-z[k][i]) for k in range(self.N)]
             # Enforce conditions for each friction case
             for k in range(self.N):
-                constraints += [x[k][2]>=v_eps*z[k][0]-bigM[2]*(1-z[k][0])]
-                constraints += [x[k][2]<=-v_eps*z[k][1]+bigM[2]*(1-z[k][1])]
+                constraints += [x[k][2]>=self.v_eps*z[k][0]-bigM[2]*(1-z[k][0])]
+                constraints += [x[k][2]<=-self.v_eps*z[k][1]+bigM[2]*(1-z[k][1])]
                 sum_z_k_234 = sum([z[k][i] for i in [2,3,4]])
-                constraints += [x[k][2]<=v_eps*sum_z_k_234+bigM[2]*(1-sum_z_k_234)]
-                constraints += [x[k][2]>=-v_eps*sum_z_k_234-bigM[2]*(1-sum_z_k_234)]
-                accel_k_opt3 = A_c[2][2]*x[k]+B_c[2][2]*u[k]+w_c[2][2]
-                constraints += [accel_k_opt3>=a_eps*z[k][2]-a_max*(1-z[k][2])]
-                accel_k_opt4 = A_c[3][2]*x[k]+B_c[3][2]*u[k]+w_c[3][2]
-                constraints += [accel_k_opt4<=-a_eps*z[k][3]+a_max*(1-z[k][3])]
-                accel_k_opt5 = A_c[4][2]*x[k]+B_c[4][2]*u[k]+w_c[4][2]
-                constraints += [accel_k_opt5>=-a_eps*z[k][4]-a_max*(1-z[k][4])]
-                constraints += [accel_k_opt5<=a_eps*z[k][4]+a_max*(1-z[k][4])]
+                constraints += [x[k][2]<=self.v_eps*sum_z_k_234+bigM[2]*(1-sum_z_k_234)]
+                constraints += [x[k][2]>=-self.v_eps*sum_z_k_234-bigM[2]*(1-sum_z_k_234)]
+                accel_k_opt3 = self.A_c[2][2]*x[k]+self.B_c[2][2]*u[k]+self.w_c[2][2]
+                constraints += [accel_k_opt3>=self.a_eps*z[k][2]-a_max*(1-z[k][2])]
+                accel_k_opt4 = self.A_c[3][2]*x[k]+self.B_c[3][2]*u[k]+self.w_c[3][2]
+                constraints += [accel_k_opt4<=-self.a_eps*z[k][3]+a_max*(1-z[k][3])]
+                accel_k_opt5 = self.A_c[4][2]*x[k]+self.B_c[4][2]*u[k]+self.w_c[4][2]
+                constraints += [accel_k_opt5>=-self.a_eps*z[k][4]-a_max*(1-z[k][4])]
+                constraints += [accel_k_opt5<=self.a_eps*z[k][4]+a_max*(1-z[k][4])]
             # Input constraints
-            constraints += [u[k] <= F_max]
-            constraints += [u[k] >= -F_max]
+            constraints += [u[k] <= F_max for k in range(self.N)]
+            constraints += [u[k] >= -F_max for k in range(self.N)]
             return constraints
 
         self.make_constraints = make_constraints
+
+    def discrete_plant(self,h):
+        """
+        Discretize the continuous-time dynamics with sampling time h.
+
+        Parameters
+        ----------
+        h : float
+            Discretization sampling time.
+
+        Returns
+        -------
+        A : list
+            Zero-input state dynamics matrices for each friction case.
+        B : list
+            Input to state dynamics matrices for each friction case.
+        w : list
+            Dynamics linearization perturbation terms for each
+            friction case.
+        """
+        A = [None]*self.num_opts
+        B = [None]*self.num_opts
+        w = [None]*self.num_opts
+        for i in range(len(self.lin_map.keys())):
+            A[i] = sla.expm(self.A_c[i]*h)
+            H = np.block([[self.A_c[i],np.array([self.B_c[i]]).T],
+                          [np.zeros((self.n_u,self.n_x+self.n_u))]])
+            B[i] = sla.expm(H*h)[:self.n_x,self.n_x:].flatten()
+            H = np.block([[self.A_c[i],np.eye(self.n_x)],
+                          [np.zeros((self.n_x,2*self.n_x))]])
+            w[i] = sla.expm(H*h)[:self.n_x,self.n_x:].dot(self.w_c[i])
+        return A,B,w
+
+    def create_plant_dynamics(self):
+        """
+        Create the plant dynamics call function.
+        """
+        # Discrete-time dynamics matrices
+        with open(global_vars.PROJECT_DIR+
+                  '/lib/sage/pendulum_parameters.pkl','rb') as f:
+            pars = pickle.load(f,encoding='latin1') # Python 2 pickle
+        v_eps = pars['v_eps']
+        a_eps = pars['a_eps']
+        T_s = pars['T_s_plant']
+        A,B,w = self.discrete_plant(T_s)
+
+        def pendulum_dynamics(x,u):
+            """State update for inverted pendulum on cart dynamics."""
+            dxdt = x[2]
+            accel = lambda i: (self.A_c[i][2].dot(x)+
+                               self.B_c[i][2]*u+self.w_c[i][2])
+            if dxdt >= v_eps:
+                # Case 1: kinetic friction, moving right
+                x_next = A[0].dot(x)+B[0]*u+w[0]
+            elif dxdt <= -v_eps:
+                # Case 2: kinetic friction, moving left
+                x_next = A[1].dot(x)+B[1]*u+w[1]
+            else:
+                # Case 3: static friction, overcome to right
+                x_next = A[2].dot(x)+B[2]*u+w[2]
+                d2xdt2 = accel(2)
+                if d2xdt2<=a_eps:
+                    # Case 4: static friction, overcome to left
+                    x_next = A[3].dot(x)+B[3]*u+w[3]
+                    d2xdt2 = accel(3)
+                    if d2xdt2>=-a_eps:
+                        # Case 5: static friction, stay in place
+                        x_next = A[4].dot(x)+B[4]*u+w[4]
+            return x_next
+        
+        self.plant = NonlinearPlant(T_s,self.n_x,self.n_u,0)
+        self.plant.state_update = lambda x,u,w: pendulum_dynamics(x,u)
+
+class ImplicitMPC:
+    def __init__(self,mpc,oracle):
+        """
+        Parameters
+        ----------
+        mpc : MPC
+            The MPC algorithm.
+        oracle : Oracle
+            Oracle optimization problems created for the MPC algorithm.
+        """
+        self.plant = mpc.plant
+        self.T_s = mpc.T_s
+        self.__oracle = oracle
+
+    def __call__(self,x):
+        """
+        Returns optimal control input for the given parameter x.
+
+        Parameters
+        ----------
+        x : np.array
+            Current state (parameter theta in the paper [1]).
+
+        Returns
+        -------
+        u : np.array
+            Epsilon-suboptimal input.
+        t : float
+            Evaluation time.
+        """
+        u,_,_,t = self.__oracle.P_theta(x)
+        return u,t
 
 class ExplicitMPC:
     def __init__(self,tree):

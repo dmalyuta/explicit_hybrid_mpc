@@ -11,6 +11,7 @@ import numpy as np
 import cvxpy as cvx
 
 import global_vars
+import tools
 
 class Oracle:
     """
@@ -61,8 +62,7 @@ class Oracle:
             feasibility_constraints += self.mpc.make_constraints(
                 self.vertices[i],x_theta[i],u_theta[i],self.mpc.delta,
                 delta_sum_constraint=True if i==0 else False)
-        self.feasibility_in_simplex = cvx.Problem(self.mpc.cost,
-                                                  feasibility_constraints)
+        self.V_R_constraints = feasibility_constraints
         
         # Make problems that allow verifying simplex-is-in-variability-ball
         # variables
@@ -181,12 +181,37 @@ class Oracle:
         -------
         delta_feas : np.array
             Feasible commutation in R.
+        vx_inputs_and_costs : list
+            List of vertex optimal inputs and costs using delta_feas.
         """
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
-        self.feasibility_in_simplex.solve(**global_vars.SOLVER_OPTIONS)
-        delta_feas = self.mpc.delta.value
-        return delta_feas
+        # Solve V_R problem
+        # **Secret sauce**: procedurally add new delta_ref's to list of
+        # commutations that delta should not equal, in case V_R comes up
+        # with deltas for which P_theta_delta is infeasible at the vertices of
+        # R (due to numerical issues - mathematically this should not happen)
+        delta_neq_other_deltas = []
+        while True:
+            # Solve V_R
+            V_R = cvx.Problem(cvx.Minimize(0),self.V_R_constraints+
+                              delta_neq_other_deltas)
+            V_R.solve(**global_vars.SOLVER_OPTIONS)
+            delta_feas = self.mpc.delta.value
+            if delta_feas is None:
+                vx_inputs_and_costs = None
+                return delta_feas,vx_inputs_and_costs
+            
+            # Check if P_theta_delta is feasible at each vertex
+            try:
+                vx_inputs_and_costs = self.__compute_vx_inputs_and_costs(
+                    R,delta_feas)
+                return delta_feas,vx_inputs_and_costs
+            except:
+                # Not feasible at some vertex -> solver must have returned an
+                # infeasible solution for bar_D_delta_R (numerical troubles)
+                tools.error_print('V_R output failed for R={}'.format(R.tolist()))
+                delta_neq_other_deltas += self.__delta_neq_constraint(delta_feas)
     
     def in_variability_ball(self,R,V_delta_R,delta_ref,delta_star,theta_star):
         """
@@ -249,7 +274,7 @@ class Oracle:
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
         self.vertex_costs.value = V_delta_R
-        # Solve D_delta^R problem
+        # Solve \bar D_delta^R problem
         # **Secret sauce**: procedurally add new delta_ref's to list of
         # commutations that delta should not equal, in case D_delta^R comes up
         # with deltas for which P_theta_delta is infeasible at the vertices of
@@ -269,26 +294,75 @@ class Oracle:
             
             # Check if P_theta_delta is feasible at each vertex
             try:
-                Nvx = len(R)
-                vx_inputs_and_costs = [None for _ in range(Nvx)]
-                for i in range(Nvx):
-                    vertex = R[i]
-                    vx_inputs_and_costs[i] = self.P_theta_delta(
-                        theta=vertex,delta=delta_star)
-                    status = self.nlp.status
-                    if status!=cvx.OPTIMAL and status!=cvx.OPTIMAL_INACCURATE:
-                        raise cvx.SolverError('problem infeasible')
+                vx_inputs_and_costs = self.__compute_vx_inputs_and_costs(
+                    R,delta_star)
                 return delta_star,theta_star,vx_inputs_and_costs
             except:
                 # Not feasible at some vertex -> solver must have returned an
                 # infeasible solution for bar_D_delta_R (numerical troubles)
-                delta_offset = cvx.Variable(self.mpc.delta_size*self.mpc.N,
-                                            boolean=True)
-                delta_neq_other_deltas += [
-                    self.mpc.delta[self.mpc.delta_size*k+i]==delta_star[
-                        self.mpc.delta_size*k+i]+(1-2*delta_star[self.mpc.delta_size*k+i])*
-                    delta_offset[self.mpc.delta_size*k+i]
-                    for k in range(self.mpc.N) for i in range(self.mpc.delta_size)]
-                delta_neq_other_deltas += [
-                    sum([delta_offset[self.mpc.delta_size*k+i] for k in
-                         range(self.mpc.N) for i in range(self.mpc.delta_size)])>=1]
+                tools.error_print('bar_D_delta_R output failed for R={}, '
+                                  'V_delta_R={}, delta_ref={}'.format(
+                                      R.tolist(),V_delta_R.tolist(),
+                                      delta_ref.to_list()))
+                delta_neq_other_deltas += self.__delta_neq_constraint(delta_star)
+
+    def __compute_vx_inputs_and_costs(self,R,delta):
+        """
+        Computes the list of optimal inputs and costs at vertices of simplex R,
+        using delta commutation.
+
+        Parameters
+        ----------
+        R : list
+            Simplex in vertex-representation at whose vertices to compute the
+            vertex inputs and costs.
+        delta : np.array
+            Commutation to use of the calculation.
+
+        Returns
+        -------
+        vx_inputs_and_costs : list
+            The list of optimal inputs and costs at the vertices of simplex R.
+        """
+        Nvx = len(R)
+        vx_inputs_and_costs = [None for _ in range(Nvx)]
+        for i in range(Nvx):
+            vertex = R[i]
+            vx_inputs_and_costs[i] = self.P_theta_delta(theta=vertex,
+                                                        delta=delta)
+            status = self.nlp.status
+            if status!=cvx.OPTIMAL and status!=cvx.OPTIMAL_INACCURATE:
+                raise cvx.SolverError('problem infeasible')
+        return vx_inputs_and_costs
+
+    def __delta_neq_constraint(self,delta_ref):
+        """
+        Create a set of constraints that self.mpc.delta is not equal to
+        delta_ref.
+
+        Parameters
+        ----------
+        delta_ref : np.array
+            Commutation which self.mpc.delta must not equal.
+
+        Returns
+        -------
+        delta_neq_delta_ref : list
+            List of constraints ensuring that self.mpc.delta is not equal to
+            delta_ref. You can append this to the list of constraints of your
+            optimization problem.
+        """
+        delta_offset = cvx.Variable(self.mpc.delta_size*self.mpc.N,
+                                    boolean=True)
+        delta_neq_delta_ref = []
+        delta_neq_delta_ref += [
+            self.mpc.delta[self.mpc.delta_size*k+i]==delta_ref[
+                self.mpc.delta_size*k+i]+
+            (1-2*delta_ref[self.mpc.delta_size*k+i])*
+            delta_offset[self.mpc.delta_size*k+i] for k in range(self.mpc.N)
+            for i in range(self.mpc.delta_size)]
+        delta_neq_delta_ref += [sum([delta_offset[self.mpc.delta_size*k+i]
+                                     for k in range(self.mpc.N)
+                                     for i in range(self.mpc.delta_size)])>=1]
+        return delta_neq_delta_ref
+        

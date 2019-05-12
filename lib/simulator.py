@@ -10,7 +10,7 @@ Copyright 2019 University of Washington. All rights reserved.
 import time
 import numpy as np
 import numpy.linalg as la
-from progressbar import progressbar
+import progressbar
 
 def array2dict(array,name):
     """
@@ -71,7 +71,7 @@ class SimulationOutput:
         self.e = np.column_stack(self.e)
 
 class Simulator:
-    def __init__(self, K, mpc, T):
+    def __init__(self, mpc, T):
         """
         Parameters
         ----------
@@ -82,13 +82,20 @@ class Simulator:
         T: float
             Simulation final time.
         """
-        self.K = K
-        self.G = mpc.plant
+        self.K = mpc.__call__ # controller
+        self.G = mpc.plant # plant
         self.uncertain_system = hasattr(mpc,'specs')
         if self.uncertain_system:
             self.specs = mpc.specs
-        self.T_d = self.G.T_d
-        self.T = T
+        # Sampling times: K for controller, G for plant
+        # **NB: assumes that the call frequencies are integer**
+        freq_K = int(1/mpc.T_s)
+        freq_G = int(1/self.G.T_d)
+        self.h = dict(K=1./freq_K,G=1./freq_G)
+        if freq_G%freq_K!=0:
+            raise ValueError('Plant and controller call times must be '
+                             'divisible')
+        self.T_f = T
         
         # Noise sampling functions
         if self.uncertain_system:
@@ -142,22 +149,42 @@ class Simulator:
         """
         if label is not None:
             self.sim_history.label = label
-        
+
+        widgets=['<%s> '%(label),progressbar.Percentage(),' ',
+                 progressbar.Bar(),' (',progressbar.ETA(),')']
+
+        # Initialization
         self.G.init(x_0)
-        
         x = self.G.x_0
         u = np.zeros(self.G.m)
-        times = np.linspace(0,self.T,int(self.T/self.T_d+1))
-        for t in progressbar(times):
+        v = np.zeros(self.G.n)
+        times = np.linspace(0,self.T_f,int(self.T_f/self.h['G']+1))
+        t_last_call_K = None
+
+        # Simulation
+        eps_mach = np.finfo('float').eps
+        for t in progressbar.progressbar(times,widgets=widgets):
             x_prev = np.copy(x)
-            v = self.state_estimation_noise(t,x,u)
-            z = x+v if t>0 else x # "Measured" state
-            u,t_call = self.K(z)            
+            # Compute input
+            if (t_last_call_K is None or
+                t-t_last_call_K>=self.h['K']-eps_mach):
+                t_last_call_K = t
+                v = self.state_estimation_noise(t,x,u)
+                z = x+v if t>0 else x # "Measured" state
+                u,t_call = self.K(z)
+            else:
+                t_call = 0.
             e = self.input_noise(t,x,u)
             if la.norm(u)==0:
+                # When input is off, no "rogue input" noise
                 e = np.zeros(e.shape)
+            # Compute process noise
             w = self.process_noise(t,x,u)
+            # Update state
             x = self.G(u+e,w)
+            # Save this iteration's data
             self.sim_history.add(t,t_call,x_prev,u,w,v,e)
+
+        # Compile and return results
         self.sim_history.compile2array()
         return self.sim_history

@@ -13,23 +13,20 @@ class Plant:
     """
     Discrete-time plant.
     """
-    def __init__(self, T_d, A, B, E):
+    def __init__(self,T_d,n,m,d):
         """
         Parameters
         ----------
         T_d : float
             Discretization time step.
-        A,B,E : np.array
-            Dynamic update equation (Ax+Bu+Ew) matrices.
+        n,m,d : int
+            State, input and discturbance dimensions.
         """
         self.T_d = T_d
-        self.A = A
-        self.B = B
-        self.E = E
-        self.n = self.A.shape[0]
-        self.m = self.B.shape[1]
-        self.d = self.E.shape[1]
-        self.x = np.zeros(A.shape[0]) # State, at zero by default
+        self.n = n
+        self.m = m
+        self.d = d
+        self.x = np.zeros(self.n) # State, at zero by default
     
     def init(self, x_0):
         """
@@ -59,11 +56,36 @@ class Plant:
         -------
         x : array
             The next state.
-        y : array
-            The output.
         """
-        self.x = self.A.dot(self.x)+self.B.dot(u)+self.E.dot(w)
+        self.x = self.state_update(self.x,u,w)
         return self.x.copy()
+
+    def state_update(self,x,u,w):
+        """State update - see above docstring for __call__."""
+        raise NotImplementedError('state update method not implemented')
+
+class LinearPlant(Plant):
+    """
+    Discrete-time plant.
+    """
+    def __init__(self, T_d, A, B, E):
+        """
+        Parameters
+        ----------
+        T_d : float
+            Discretization time step.
+        A,B,E : np.array
+            Dynamic update equation (Ax+Bu+Ew) matrices.
+        """
+        super().__init__(T_d,A.shape[0],B.shape[1],E.shape[1])
+        self.A = A
+        self.B = B
+        self.E = E
+    
+    def state_update(self, x, u, w):
+        """State update."""
+        x = self.A.dot(x)+self.B.dot(u)+self.E.dot(w)    
+        return x
     
     def D(self, specs):
         """
@@ -90,3 +112,8 @@ class Plant:
             D += [M[uncertainty_type]]
         D = np.hstack(D) if D!=[] else None
         return D
+
+class NonlinearPlant(Plant):
+    """Nonlinear plant. User must define their own custom __call__()."""
+    def __init__(self,T_d,n,m,d):
+        super().__init__(T_d,n,m,d)

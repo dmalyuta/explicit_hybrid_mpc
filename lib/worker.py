@@ -33,14 +33,14 @@ class WorkerStatusPublisher:
                          time_lcss=0.) # [s] Total time spent processing L-CSS algorithm tasks
         self.time_previous = time.time() # [s] Timestamp when time was last updated
         self.volume_current = None # [-] Volume of current root simplex
-        self.req = None # Non-blocking MPI Request object (once the first request is made)
         self.__write() # Initial write
     
     def __write(self):
         """
         Write the data to file.
-        """        
-        self.req = tools.MPI.nonblocking_send(self.data,dest=global_vars.SCHEDULER_PROC,tag=global_vars.STATUS_TAG)
+        """
+        tools.MPI.send(self.data,dest=global_vars.SCHEDULER_PROC,
+                       tag=global_vars.STATUS_TAG)
     
     def set_new_root_simplex(self,R,location,algorithm):
         """
@@ -98,7 +98,7 @@ class WorkerStatusPublisher:
         # Update status
         if active is not None:
             self.data['status'] = 'active' if active else 'idle'
-            tools.debug_print('sending status update, status = %s'%(self.data['status']))
+            tools.info_print('sending status update, status = %s'%(self.data['status']))
         if failed is True:
             self.data['status'] = 'failed'
         # Update volume counters
@@ -126,7 +126,7 @@ class Worker:
         suboptimality_settings = tools.MPI.broadcast(None,root=global_vars.SCHEDULER_PROC)
         self.oracle = example(abs_err=suboptimality_settings['abs_err'],
                               rel_err=suboptimality_settings['rel_err'])[2]
-        tools.debug_print('made oracle')
+        tools.info_print('made oracle')
         # Status publisher
         self.status_publisher = WorkerStatusPublisher()
         tools.MPI.global_sync() # wait for all slaves to setup
@@ -159,12 +159,12 @@ class Worker:
                 # the scheduler. In this case, conservatively assume that there
                 # are no idle workers
                 idle_worker_count = 0
-        tools.debug_print('idle worker count = %d'%(idle_worker_count))
+        tools.info_print('idle worker count = %d'%(idle_worker_count))
         if idle_worker_count>0:
             new_task = dict(branch_root=child,location=location,
                             action=which_alg)
-            tools.MPI.nonblocking_send(new_task,dest=global_vars.SCHEDULER_PROC,
-                                       tag=global_vars.NEW_BRANCH_TAG)
+            tools.MPI.send(new_task,dest=global_vars.SCHEDULER_PROC,
+                           tag=global_vars.NEW_BRANCH_TAG)
         else:
             self.status_publisher.update(algorithm=which_alg)
             self.alg_call(which_alg,child,location)
@@ -186,16 +186,17 @@ class Worker:
             Tree root. Sufficient that it just holds node.data.vertices for the
             simplex vertices.
         location : string
-            Location in tree of this node. String where '0' at index i means take
-            left child, '1' at index i means take right child (at depth value i).
+            Location in tree of this node. String where '0' at index i means
+            take left child, '1' at index i means take right child (at depth
+            value i).
         """
         self.status_publisher.update(location=location)
-        tools.debug_print('ecc at location = %s'%(location))
+        tools.info_print('ecc at location = %s'%(location))
         c_R = np.average(node.data.vertices,axis=0) # Simplex barycenter
         if not self.oracle.P_theta(theta=c_R,check_feasibility=True):
             raise RuntimeError('STOP, Theta contains infeasible regions')
         else:
-            delta_hat = self.oracle.V_R(node.data.vertices)
+            delta_hat,vx_inputs_and_costs = self.oracle.V_R(node.data.vertices)
             if delta_hat is None:
                 S_1,S_2 = tools.split_along_longest_edge(node.data.vertices)[:2]
                 child_left = NodeData(vertices=S_1)            
@@ -207,19 +208,15 @@ class Worker:
                 self.ecc(node.right,location+'1')
             else:
                 # Assign feasible commutation to simplex
-                vertex_inputs_and_costs = [self.oracle.P_theta_delta(
-                    theta=vertex,delta=delta_hat)
-                                           for vertex in node.data.vertices]
                 Nvx = node.data.vertices.shape[0]
-                vertex_costs = np.array([vertex_inputs_and_costs[i][1]
+                vertex_costs = np.array([vx_inputs_and_costs[i][1]
                                          for i in range(Nvx)])
-                vertex_inputs = np.array([vertex_inputs_and_costs[i][0]
+                vertex_inputs = np.array([vx_inputs_and_costs[i][0]
                                           for i in range(Nvx)])
                 node.data = NodeData(vertices=node.data.vertices,
                                      commutation=delta_hat,
                                      vertex_costs=vertex_costs,
                                      vertex_inputs=vertex_inputs)
-                volume_closed = tools.simplex_volume(node.data.vertices)
                 self.offload_child_computation(node,location,'lcss')
     
     def lcss(self,node,location):
@@ -340,15 +337,15 @@ class Worker:
         """
         while True:
             # Block until new data is received from scheduler
-            tools.debug_print('waiting for data')
+            tools.info_print('waiting for data')
             data = tools.MPI.blocking_receive(source=global_vars.SCHEDULER_PROC,
                                               tag=global_vars.NEW_WORK_TAG)
-            tools.debug_print('received data {}'.format(data))
+            tools.info_print('received data {}'.format(data))
             if data['action']=='stop':
                 # Request from scheduler to stop
                 return
             else:
-                tools.debug_print('got branch at location = %s'%
+                tools.info_print('got branch at location = %s'%
                                   (data['location']))
                 # Get data about the branch to be worked on
                 branch = data['branch_root']
@@ -359,7 +356,7 @@ class Worker:
                 self.status_publisher.update(active=True)
                 # Do work on this branch (i.e. partition this simplex)
                 try:
-                    tools.debug_print('calling algorithm')
+                    tools.info_print('calling algorithm')
                     self.alg_call(data['action'],branch,branch_location)
                 except:
                     self.status_publisher.update(failed=True)

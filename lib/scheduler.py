@@ -361,7 +361,7 @@ class Scheduler:
             """
             num_workers_idle = N_workers-sum(worker_active)
             num_workers_with_no_work = max(num_workers_idle-len(self.task_queue),0)
-            tools.debug_print('idle worker count = %d'%(num_workers_idle))
+            tools.info_print('idle worker count = %d'%(num_workers_idle))
             with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
                 pickle.dump(num_workers_with_no_work,f)
                 
@@ -377,7 +377,7 @@ class Scheduler:
             for i in worker_idxs:
                 tasks = self.task_msg[i].receive('all')
                 if tasks is not None:
-                    tools.debug_print('received %d new tasks from worker %d'%
+                    tools.info_print('received %d new tasks from worker %d'%
                                       (len(tasks),get_worker_proc_num(i)))
                     self.task_queue.extend(tasks)
             # Dispatch tasks to idle workers
@@ -386,7 +386,7 @@ class Scheduler:
                     if not worker_active[i]:
                         # Dispatch task to worker process worker_proc_num
                         task = self.task_queue.pop()
-                        tools.debug_print(('dispatching task to worker %d (%d '
+                        tools.info_print(('dispatching task to worker %d (%d '
                                            'tasks left), data {}'%
                                            (get_worker_proc_num(i),
                                             len(self.task_queue))).format(task))
@@ -401,10 +401,10 @@ class Scheduler:
             # Collect completed work from workers
             any_tasks_completed = False
             for i in worker_idxs:
-                #NB: there's just one message that should ever be in the buffer
+                # NB: there's just one message that should ever be in the buffer
                 finished_task = self.completed_work_msg[i].receive()
                 if finished_task is not None:
-                    tools.debug_print('received finished branch from worker %d'%
+                    tools.info_print('received finished branch from worker %d'%
                                       (get_worker_proc_num(i)))
                     location = worker2task[str(i)]['location']
                     task_filename = global_vars.DATA_DIR+'/branch_%s.pkl'%(location)
@@ -422,7 +422,7 @@ class Scheduler:
             for i in worker_idxs:
                 status = self.status_msg[i].receive('newest')
                 if status is not None:
-                    tools.debug_print('got status update from worker (%d)'%
+                    tools.info_print('got status update from worker (%d)'%
                                       (get_worker_proc_num(i)))
                     worker_proc_status[i] = status
             self.status_publisher.update(worker_proc_status,len(self.task_queue))

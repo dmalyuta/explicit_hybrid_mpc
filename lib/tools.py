@@ -25,6 +25,8 @@ from tree import Tree, NodeData
 class MPICommunicator:
     def __init__(self):
         self.comm = mpi4py_MPI.COMM_WORLD # MPI inter-process communicator
+        self.async_send_counter = 0 # Counter of how many messages were send asynchronously
+        self.req = None # Latest non-blocking MPI send Request object
 
     def size(self):
         """Get total number of processes."""
@@ -49,7 +51,7 @@ class MPICommunicator:
 
     def nonblocking_send(self,*args,**kwargs):
         """MPI send message, non-blocking."""
-        return self.comm.isend(*args,**kwargs)
+        return self.comm.issend(*args,**kwargs)
 
     def blocking_receive(self,*args,**kwargs):
         """MPI receive message, blocking."""
@@ -57,13 +59,36 @@ class MPICommunicator:
     
     def blocking_send(self,*args,**kwargs):
         """MPI send message, blocking."""
-        return self.comm.send(*args,**kwargs)
+        return self.comm.ssend(*args,**kwargs)
+
+    def send(self,*args,**kwargs):
+        """Wrapper for MPI blocking/non-blocking sending respecting
+        MAX_ASYNC_SEND."""
+        self.async_send_counter += 1
+        receive_posted = False if self.req is None else self.req.test()[0]
+        if receive_posted:
+            # matching receive is posted
+            # https://www.mcs.anl.gov/research/projects/mpi/sendmode.html
+            # see also:
+            # https://stackoverflow.com/questions/21512975/what-is-the-difference-between-isend-and-issend
+            self.async_send_counter = 0 # reset
+        overflow = self.async_send_counter>global_vars.MAX_ASYNC_SEND
+        if self.async_send_counter>global_vars.MAX_ASYNC_SEND:
+            # wait for matching receive to post
+            error_print('waiting...')
+            self.req.wait()
+            error_print('done waiting')
+            self.async_send_counter = 0 # reset
+        error_print('counter = %d'%(self.async_send_counter))
+        self.req = self.nonblocking_send(*args,**kwargs)
+        return self.req
+            
 
 MPI = MPICommunicator() # Object that abstracts calls to MPI library routines
 
 class NonblockingMPIMessageReceiver:
     """Wraps a call to MPI's Comm.irecv."""
-    def __init__(self,source,tag,buffer=None):
+    def __init__(self,source,tag):
         """
         Parameters
         ----------
@@ -71,17 +96,9 @@ class NonblockingMPIMessageReceiver:
             Rank of message source process.
         tag : int
             Message tag.
-        buffer : int, optional
-            Upper bound to the number of bytes of the incoming pickled message.
-            E.g. ``bytearray(1<<20)`` means that the message is at most 1 MB in
-            size. See ``https://tinyurl.com/y5craot6`` and
-            ``https://tinyurl.com/yy42wrpm``.
         """
         def update_receiver():
-            if buffer is not None:
-                self.req = MPI.nonblocking_receive(buffer,source=source,tag=tag)
-            else:
-                self.req = MPI.nonblocking_receive(source=source,tag=tag)
+            self.req = MPI.nonblocking_receive(source=source,tag=tag)
             
         self.update_receiver = update_receiver
         self.update_receiver()
@@ -95,9 +112,9 @@ class NonblockingMPIMessageReceiver:
         which : {'oldest','newest','all'}, optional
             Which message in the buffer to receive; 'oldest' gets the first
             message in the queue, 'newest' receives the last message in the
-            queue (clearing the queue in the process), and 'all' gets all the
-            messages in the queue.
-            
+            queue, and 'all' gets all the messages in the queue. 'newest' and
+            'all' clear the queue in the process.
+        
         Returns
         -------
         The received data, ``None`` if no data received. The type depends on
@@ -122,9 +139,9 @@ class NonblockingMPIMessageReceiver:
         else:
             return data_list
 
-def debug_print(msg):
+def info_print(msg):
     """
-    Print message based on verbosity setting.
+    Print info message based on verbosity setting.
     
     Parameters
     ----------
@@ -132,8 +149,23 @@ def debug_print(msg):
         The message to print.
     """
     rank = MPI.rank()
-    if global_vars.VERBOSE:
-        print('%s (%d): %s'%('scheduler' if rank==global_vars.SCHEDULER_PROC else 'worker',rank,msg))
+    if global_vars.VERBOSE==2:
+        print('%s (%d): %s'%('scheduler' if rank==global_vars.SCHEDULER_PROC
+                             else 'worker',rank,msg))
+
+def error_print(msg):
+    """
+    Print error message based on verbosity setting.
+    
+    Parameters
+    ----------
+    msg : string
+        The message to print.
+    """
+    rank = MPI.rank()
+    if global_vars.VERBOSE>=1:
+        print('%s (%d): %s'%('scheduler' if rank==global_vars.SCHEDULER_PROC
+                             else 'worker',rank,msg))
 
 def simplex_volume(R):
     """
@@ -191,6 +223,39 @@ def delaunay(R):
         cursor.grow(left,right)
         cursor = cursor.right
     return root, Nsx, vol
+
+def join_triangulation(cursor,new_tree):
+        """
+        Append a new tree to an existing one at the rightmost leaf.
+        This effectively union-izes several triangulations.
+        **Modifies the tree associated with cursor and sets
+        new_tree.top=False**
+
+        Parameters
+        ----------
+        cursor : Tree
+            Root of the tree to which the new tree is to be appended.
+        new_tree : Tree
+            Root of the new tree to be appended.
+        """
+        if cursor.is_leaf():
+            # Performs the transformation:
+            #   ...            ...
+            #     \              \
+            #      \              \
+            #    cursor          None
+            #                    /  \
+            #                   /    \
+            #              cursor  new_tree
+            #                       /   \
+            #                      /     \
+            #                    ...     ...
+            cursor.grow(cursor.data,None)
+            cursor.right = new_tree
+            new_tree.top = False
+            cursor.data = None
+        else:
+            join_triangulation(cursor.right,new_tree)
 
 def split_along_longest_edge(R):
     """

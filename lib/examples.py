@@ -11,16 +11,21 @@ import numpy as np
 
 import global_vars
 import mpc_library
+import tools
 from oracle import Oracle
 from polytope import Polytope
-from tools import delaunay
 
-def satellite_z_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
+def create_oracle(mpc,set_vrep,abs_frac,abs_err,rel_err):
     """
-    Initializes the partition and oracle for the SatelliteZ example.
+    Creates the optimization problem oracle.
     
     Parameters
     ----------
+    mpc : MPC
+        The control law to be used.
+    set_vrep : np.array
+        Vertex representation of the set to be partitioned (every row is a
+        vertex).
     abs_frac : float, optional
         Fraction (0,1) away from the origin of the full size of the invariant
         set where to compute the absolute error.
@@ -28,57 +33,59 @@ def satellite_z_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
         Absolute error value. If provided, takes precedence over abs_frac.
     rel_err : float
         Relative error value.
-        
+
     Returns
     -------
-    full_set : Polytope
-        The set to be partitioned.
-    partition : Tree
-        The initial invariant set, pre-partitioned into simplices via Delaunay
-        triangulation.
     oracle : Oracle
-        The optimization problem oracle.
+        Optimization problem oracle.
     """
+    if abs_err is None:
+        oracle = Oracle(mpc,eps_a=1.,eps_r=1.)
+        abs_err = np.max([oracle.P_theta(theta=vx)[2]
+                          for vx in [abs_frac*vx for vx in set_vrep]])
+    oracle = Oracle(mpc,eps_a=abs_err,eps_r=rel_err)
+    return oracle
+
+"""
+Common parameters/returns for each *_example function below:
+
+Initializes the partition and oracle for the <NAME> example.
+
+Parameters
+----------
+abs_frac : float, optional
+    Fraction (0,1) away from the origin of the full size of the invariant
+    set where to compute the absolute error.
+abs_err : float, optional
+    Absolute error value. If provided, takes precedence over abs_frac.
+rel_err : float
+    Relative error value.
+
+Returns
+-------
+full_set : Polytope
+    The set to be partitioned.
+partition : Tree
+    The initial invariant set, pre-partitioned into simplices via Delaunay
+    triangulation.
+oracle : Oracle
+    The optimization problem oracle.
+"""
+
+def satellite_z_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
     # Plant
     sat = mpc_library.SatelliteZ()
     # The set to partition
     full_set = Polytope(R=[(-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
                            (-sat.pars['vel_err_max'],sat.pars['vel_err_max'])])
-    Theta = np.row_stack(full_set.V)
+    full_set_vrep = np.row_stack(full_set.V)
     # Create the optimization problem oracle
-    if abs_err is None:
-        oracle = Oracle(sat,eps_a=1.,eps_r=1.)
-        abs_err = np.max([oracle.P_theta(theta=vx)[2]
-                          for vx in [abs_frac*vx for vx in Theta]])
-    oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err)
+    oracle = create_oracle(sat,full_set_vrep,abs_frac,abs_err,rel_err)
     # Initial triangulation
-    partition, number_init_simplices, vol = delaunay(Theta)
+    partition, number_init_simplices, vol = tools.delaunay(full_set_vrep)
     return full_set, partition, oracle
 
 def satellite_xy_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
-    """
-    Initializes the partition and oracle for the SatelliteXY example.
-    
-    Parameters
-    ----------
-    abs_frac : float, optional
-        Fraction (0,1) away from the origin of the full size of the invariant
-        set where to compute the absolute error.
-    abs_err : float, optional
-        Absolute error value. If provided, takes precedence over abs_frac.
-    rel_err : float
-        Relative error value.
-        
-    Returns
-    -------
-    full_set : Polytope
-        The set to be partitioned.
-    partition : Tree
-        The initial invariant set, pre-partitioned into simplices via Delaunay
-        triangulation.
-    oracle : Oracle
-        The optimization problem oracle.
-    """
     # Plant
     sat = mpc_library.SatelliteXY()
     # The set to partition
@@ -86,41 +93,14 @@ def satellite_xy_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
                            (-sat.pars['pos_err_max'],sat.pars['pos_err_max']),
                            (-sat.pars['vel_err_max'],sat.pars['vel_err_max']),
                            (-sat.pars['vel_err_max'],sat.pars['vel_err_max'])])
-    Theta = np.row_stack(full_set.V)
+    full_set_vrep = np.row_stack(full_set.V)
     # Create the optimization problem oracle
-    if abs_err is None:
-        oracle = Oracle(sat,eps_a=1.,eps_r=1.)
-        abs_err = np.max([oracle.P_theta(theta=vx)[2]
-                          for vx in [abs_frac*vx for vx in Theta]])
-    oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err)
+    oracle = create_oracle(sat,full_set_vrep,abs_frac,abs_err,rel_err)
     # Initial triangulation
-    partition, number_init_simplices, vol = delaunay(Theta)
+    partition, number_init_simplices, vol = tools.delaunay(full_set_vrep)
     return full_set, partition, oracle
     
 def satellite_xyz_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
-    """
-    Initializes the partition and oracle for the SatelliteXYZ example.
-    
-    Parameters
-    ----------
-    abs_frac : float, optional
-        Fraction (0,1) away from the origin of the full size of the invariant
-        set where to compute the absolute error.
-    abs_err : float, optional
-        Absolute error value. If provided, takes precedence over abs_frac.
-    rel_err : float
-        Relative error value.
-        
-    Returns
-    -------
-    full_set : Polytope
-        The set to be partitioned.
-    partition : Tree
-        The initial invariant set, pre-partitioned into simplices via Delaunay
-        triangulation.
-    oracle : Oracle
-        The optimization problem oracle.
-    """
     # Plant
     sat = mpc_library.SatelliteXYZ()
     # The set to partition
@@ -130,55 +110,57 @@ def satellite_xyz_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
                            (-sat.pars['vel_err_max'],sat.pars['vel_err_max']),
                            (-sat.pars['vel_err_max'],sat.pars['vel_err_max']),
                            (-sat.pars['vel_err_max'],sat.pars['vel_err_max'])])
-    Theta = np.row_stack(full_set.V)
+    full_set_vrep = np.row_stack(full_set.V)
     # Create the optimization problem oracle
-    if abs_err is None:
-        oracle = Oracle(sat,eps_a=1.,eps_r=1.)
-        abs_err = np.max([oracle.P_theta(theta=vx)[2]
-                          for vx in [abs_frac*vx for vx in Theta]])
-    oracle = Oracle(sat,eps_a=abs_err,eps_r=rel_err)
+    oracle = create_oracle(sat,full_set_vrep,abs_frac,abs_err,rel_err)
     # Initial triangulation
-    partition, number_init_simplices, vol = delaunay(Theta)
+    partition, number_init_simplices, vol = tools.delaunay(full_set_vrep)
     return full_set, partition, oracle
 
 def pendulum_example(abs_frac=0.5,abs_err=None,rel_err=2.0):
-    """
-    Initializes the partition and oracle for the InvertedPendulumOnCart example.
-    
-    Parameters
-    ----------
-    abs_frac : float, optional
-        Fraction (0,1) away from the origin of the full size of the invariant
-        set where to compute the absolute error.
-    abs_err : float, optional
-        Absolute error value. If provided, takes precedence over abs_frac.
-    rel_err : float
-        Relative error value.
-        
-    Returns
-    -------
-    full_set : Polytope
-        The set to be partitioned.
-    partition : Tree
-        The initial invariant set, pre-partitioned into simplices via Delaunay
-        triangulation.
-    oracle : Oracle
-        The optimization problem oracle.
-    """
     # Plant
     pendulum = mpc_library.InvertedPendulumOnCart()
-    # The set to partition
-    full_set = pendulum.Theta
-    Theta = np.row_stack(full_set.V)
+    # Create the set to be partitioned
+    # --------------------------------
+    # Problem: overlap=0 for ECC feasibility algorithm if we use the vanilla
+    # full set. Reason: when dxdt<v_eps and dxdt>v_eps at simplex vertices,
+    # the commutation is forced to have the first two elements zero for the
+    # first case and the last three elements zero for the seconds case. Hence,
+    # ECC will not converge.
+    # Solution: manually divide the set into three sections:
+    #   1) dxdt>=v_eps
+    #   2) dxdt<=-v_eps
+    #   3) -v_eps<=dxdt<=v_eps
+    full_set = Polytope(R=[(-pendulum.p_err,pendulum.p_err),
+                           (-pendulum.ang_err,pendulum.ang_err),
+                           (-pendulum.v_err,pendulum.v_err),
+                           (-pendulum.rate_err,pendulum.rate_err)])
+    set_1 = Polytope(R=[(-pendulum.p_err,pendulum.p_err),
+                        (-pendulum.ang_err,pendulum.ang_err),
+                        (pendulum.v_eps,pendulum.v_err),
+                        (-pendulum.rate_err,pendulum.rate_err)])
+    set_2 = Polytope(R=[(-pendulum.p_err,pendulum.p_err),
+                        (-pendulum.ang_err,pendulum.ang_err),
+                        (-pendulum.v_err,-pendulum.v_eps),
+                        (-pendulum.rate_err,pendulum.rate_err)])
+    set_3 = Polytope(R=[(-pendulum.p_err,pendulum.p_err),
+                        (-pendulum.ang_err,pendulum.ang_err),
+                        (-pendulum.v_eps,pendulum.v_eps),
+                        (-pendulum.rate_err,pendulum.rate_err)])
+    full_set_vrep = np.row_stack(full_set.V)
+    set_1_vrep = np.row_stack(set_1.V)
+    set_2_vrep = np.row_stack(set_2.V)
+    set_3_vrep = np.row_stack(set_3.V)
     # Create the optimization problem oracle
-    if abs_err is None:
-        oracle = Oracle(pendulum,eps_a=1.,eps_r=1.)
-        abs_err = np.max([oracle.P_theta(theta=vx)[2]
-                          for vx in [abs_frac*vx for vx in Theta]])
-    oracle = Oracle(pendulum,eps_a=abs_err,eps_r=rel_err)
+    oracle = create_oracle(pendulum,full_set_vrep,abs_frac,abs_err,rel_err)
     # Initial triangulation
-    partition, number_init_simplices, vol = delaunay(Theta)
-    return full_set, partition, oracle
+    partition_set_1,_,_ = tools.delaunay(set_1_vrep)
+    partition_set_2,_,_ = tools.delaunay(set_2_vrep)
+    partition_set_3,_,_ = tools.delaunay(set_3_vrep)
+    partition = partition_set_1
+    tools.join_triangulation(partition_set_2,partition_set_3)
+    tools.join_triangulation(partition_set_1,partition_set_2)
+    return full_set, partition_set_1, oracle
 
 def example(*args,**kwargs):
     """
@@ -196,58 +178,3 @@ def example(*args,**kwargs):
         return pendulum_example(*args,**kwargs)
     else:
         raise ValueError('Unknown example (%s)'%(global_vars.EXAMPLE))
-
-#%% Test code for pendulum
-
-import cvxpy as cvx
-
-global_vars.MPC_HORIZON = 4
-global_vars.SOLVER_OPTIONS['verbose'] = False
-full_set, partition, oracle = pendulum_example()
-
-# =============================================================================
-# import cvxpy as cvx
-# 
-# global_vars.MPC_HORIZON = 10
-# #global_vars.SOLVER_OPTIONS = dict(solver=cvx.ECOS, verbose=False)
-# full_set, partition, oracle = pendulum_example()
-# 
-# #print(oracle.P_theta(np.array([0.1,0,0,0])))
-# #import sys
-# #sys.exit()
-# 
-# from simulator import Simulator
-# 
-# plant = mpc_library.InvertedPendulumOnCart()
-# def mpc(x):
-#     u,_,_,t = oracle.P_theta(x)
-#     print(x,u)
-#     return u,t
-# x_init = np.array([0.1,0,0,0])
-# T = 1 # [s] Simulation duration
-# simulator = Simulator(mpc,plant,T)
-# simout = simulator.run(x_init,label='pendulum')
-# 
-# #%%
-# 
-# import numpy.linalg as la
-# import matplotlib.pyplot as plt
-# 
-# fig = plt.figure(1)
-# plt.clf()
-# ax = fig.add_subplot(111)
-# ax.plot(simout.t,la.norm(simout.u,axis=0),
-#         color='orange',linestyle='none',marker='.',markersize=10)
-# ax.set_xlabel('Time [s]')
-# ax.set_ylabel('Input norm')
-# ax.set_xlim([0,simout.t[-1]])
-# plt.tight_layout()
-# plt.show(block=False)
-# 
-# fig = plt.figure(2)
-# plt.clf()
-# ax = fig.add_subplot(111)
-# ax.plot(simout.t,simout.x[0])
-# ax.plot(simout.t,simout.x[1])
-# ax.plot(simout.t,simout.x[2])
-# =============================================================================

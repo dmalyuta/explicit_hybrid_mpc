@@ -21,8 +21,8 @@ create_jobs()
     done    
 }
 
-EXAMPLE=cwh_z
-MPC_N=4
+EXAMPLE=pendulum
+MPC_N=5
 ABS_FRACS=(0.5)
 REL_ERRS=(2.0)
 JOB_DURATIONS=('10:00:00')

@@ -10,7 +10,7 @@ Copyright 2019 University of Washington. All rights reserved.
 import os
 
 # MPC problem parameters (**set via command line arguments**)
-EXAMPLE = None # Which example to run. Options: {'cwh_z','cwh_xy','cwh_xyz'}
+EXAMPLE = None # Which example to run. Options: {'cwh_z','cwh_xy','cwh_xyz','pendulum'}
 MPC_HORIZON = None # MPC prediction horizon length
 ABS_FRAC = None # Fraction of full set for computing partition absolute error tolerance
 REL_ERR = None # Partition relative error tolerance
@@ -24,7 +24,7 @@ BRANCHES_FILE = None # Tree branches, used for tree building
 IDLE_COUNT_FILE = None # Idle process count
 
 SOLVER_OPTIONS = dict(solver='MOSEK', verbose=False) # Optimization solver options
-VERBOSE = False # Whether to print debug info to terminal
+VERBOSE = 1 # 0: no printing; 1: print error msgs; 2: print error+info msgs
 STATUS_TAG = 11 # MPI Isend tag for worker status
 NEW_WORK_TAG = 22 # MPI Isend tag for new work for a worker process
 NEW_BRANCH_TAG = 33 # MPI Isend tag for new branch root to put into queue
@@ -33,9 +33,8 @@ SCHEDULER_PROC = 0 # MPI rank of scheduler process
 ERROR = '>>> ' # Error message prefix
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(
     os.path.realpath(__file__)),os.pardir)) # Project root directory
+MAX_ASYNC_SEND = 10 # Max number of MPI messages that can be sent asynchronously by each process
 
-SCHEDULER_RATE = 20. # [Hz] Frequency of the scheduler process main loop
+SCHEDULER_RATE = 1000. # [Hz] Frequency of the scheduler process main loop
 STATUS_WRITE_FREQUENCY = 1. # [Hz] Frequency for updating STATUS_FILE
 STATISTICS_WRITE_FREQUENCY = 0.2 # [Hz] Frequency for updating STATISTICS_FILE
-
-CMD_LINE_ARGS = None # The passed command-line arguments (**set via command line arguments**)

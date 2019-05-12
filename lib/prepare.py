@@ -23,9 +23,9 @@ Some notes on usage:
   instead use --runtime-dir=<runtime directory name>, which should be the one
   that was created by ``prepare.py``. In fact, it is the directory of the
   ``run.sh`` file that you want to execute.
-- You may use the --ecc-tree commandline argument to specify the directory of a
-  pre-computed feasible partition by the ECC 2019 algorithm
-  (worker.py:Worker.ecc)
+- You may use the --branches commandline argument to use an existing
+  branches.pkl in the <runtime_dir>/data folder, e.g. from a previous incomplete
+  run.
 """
 
 def parse_args():
@@ -60,7 +60,8 @@ def parse_args():
                         ' name',required=False)
     parser.add_argument('-b','--branches',action='store_true',
                         dest='use_branches',default=False,
-                        help='whether to use',required=False)
+                        help='whether to use existing branches.pkl',
+                        required=False)
     args = vars(parser.parse_args())
     return args
 
@@ -97,7 +98,6 @@ def set_global_variables():
         Timestamp when the runtime directory was created.
     """
     args = parse_args()
-    global_vars.CMD_LINE_ARGS = args
     # Optimization oracle parameters
     global_vars.EXAMPLE = args['example']
     global_vars.MPC_HORIZON = args['N']
