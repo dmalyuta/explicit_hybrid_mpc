@@ -24,20 +24,11 @@ class ETACalculator:
         """
         Parameters
         ----------
-        call_period : float
-            The period, in seconds, with which the ``update()`` method is going
-            to be called.
-        time_constant : float
-            The exponential forgetting time constant. Measurements older than
-            time_constant seconds are weighted with <=exp(-1)=0.368.
+        call_period, time_constant : see RLS.__init__ docstring
         store_history : bool, optional
             ``True`` to store RLS measurement history for debugging purposes.
         """
-        self.lamda = call_period/time_constant # [1/s] 1/(time constant)
-        self.state = 'init' # {'init','recurse'}
-        self.sigma = 1. # Summer normalization term
-        self.estimated_rate = None # [%/s] Volume filling rate estimate
-        
+        self.rls = RLS(call_period,time_constant)
         self.store_history = store_history
         if self.store_history:
             open(global_vars.ETA_RLS_FILE,'w').close() # clear the storage file
@@ -56,17 +47,15 @@ class ETACalculator:
         eta : float
             The ETA estimate in seconds.
         """
-        if self.estimated_rate is None or self.estimated_rate==0.:
+        if self.rls.estimate is None or self.rls.estimate==0.:
             eta = None
         else:
-            eta = (1-volume_filled)/self.estimated_rate
+            eta = (1-volume_filled)/self.rls.estimate
         return eta
         
     def reset(self):
         """Reset the estimator."""
-        self.state = 'init'
-        self.sigma = 1.
-        self.estimated_rate = None
+        self.rls.reset()
         
     def update(self,measured_rate):
         """
@@ -77,20 +66,56 @@ class ETACalculator:
         measured_rate : float
             Volume filling rate [%/s] measurement.
         """
+        self.rls.update(measured_rate)
+        if self.store_history:
+            with open(global_vars.ETA_RLS_FILE,'ab') as f:
+                pickle.dump(dict(measurement=measurement,
+                                 estimate=self.rls.estimate),f)
+
+class RLS:
+    """Recursive least squares with exponential forgetting for a scalar"""
+    def __init__(self,call_period,time_constant):
+        """
+        Parameters
+        ----------
+        call_period : float
+            The period, in seconds, with which the ``update()`` method is going
+            to be called.
+        time_constant : float
+            The exponential forgetting time constant. Measurements older than
+            time_constant seconds are weighted with <=exp(-1)=0.368.
+        """
+        self.lamda = call_period/time_constant # [1/s] 1/(time constant)
+        self.state = 'init' # {'init','recurse'}
+        self.sigma = 1. # Summer normalization term
+        self.estimate = None # Estimate of the scalar value
+
+    def reset(self):
+        """Reset the estimator."""
+        self.state = 'init'
+        self.sigma = 1.
+        self.estimate = None
+
+    def update(self,measurement):
+        """
+        Updates the current estimate using the measurement.
+        
+        Parameters
+        ----------
+        measurement : float
+            Measured value of the scalar quantity being estimated.
+        """
         if self.state=='init':
-            self.estimated_rate = measured_rate
+            self.estimate = measurement
             self.state = 'recurse'
         else:
             self.sigma = 1+np.exp(-self.lamda)*self.sigma
             phi = 1/self.sigma
-            self.estimated_rate = phi*measured_rate+(1-phi)*self.estimated_rate
-        # debugging
-        if self.store_history:
-            with open(global_vars.ETA_RLS_FILE,'ab') as f:
-                pickle.dump(dict(measurement=measured_rate,estimate=self.estimated_rate),f)
+            self.estimate = phi*measurement+(1-phi)*self.estimate
 
 class MainStatusPublisher:
-    def __init__(self,total_volume,call_period,status_write_period,statistics_save_period):
+    def __init__(self,total_volume,call_period,status_write_period,
+                 statistics_save_period):
         """
         Parameters
         ----------
@@ -108,23 +133,49 @@ class MainStatusPublisher:
         """
         self.total_volume = total_volume
         self.time_previous,self.time_total = None,0.
-        self.worker_procs = [i for i in range(tools.MPI.size()) if i!=global_vars.SCHEDULER_PROC]  # MPI ranks of worker processes
+        # MPI ranks of worker processes
+        self.worker_procs = [i for i in range(tools.MPI.size())
+                             if i!=global_vars.SCHEDULER_PROC]
         
         # Create blank status and statistics files
         open(global_vars.STATUS_FILE,'w').close()
         open(global_vars.STATISTICS_FILE,'w').close()
         
-        # ETA calculator
-        eta_window_duration = int(10./call_period)*call_period # [s] Duration of window for finite-differencing to estimate volume filling rate
-        eta_time_constant = 3*60. # [s] Time constant for ETA (more precisely - volume filling rate) estimation
-        self.eta_last_measurement = None # Memory variable for volume filling rate measurement via finite-differencing
-        self.eta_estimator = ETACalculator(call_period=eta_window_duration,time_constant=eta_time_constant,store_history=False)
+        # ETA (i.e. time remaining) calculator
+        # [s] duration of window for finite-differencing to estimate volume
+        # filling rate
+        eta_window_duration = 10.
+        # [s] time constant for ETA (more precisely - volume filling rate)
+        # estimation
+        eta_time_constant = 3*60.
+        # memory variable for volume filling rate measurement via
+        # finite-differencing
+        self.eta_last_measurement = None
+        self.eta_estimator = ETACalculator(call_period=eta_window_duration,
+                                           time_constant=eta_time_constant,
+                                           store_history=False)
+
+        # Scheduler main loop rate estimator
+        # [s] duration of window for finite-differencing to estimate loop rate
+        looprate_window_duration = 2.
+        # [s] time constant for loop rate exponential forgetting
+        looprate_time_constant = 10.
+        # memory variable of previous call time
+        self.looprate_time_prev = None
+        self.looprate_estimator = RLS(call_period=looprate_window_duration,
+                                      time_constant=looprate_time_constant)
+        # multiply measured rate by this scaling factor to recover the true
+        # scheduler loop rate (**Assumes that call_period==ideal scheduler main
+        # loop rate**)
+        self.looprate_scale = looprate_window_duration/call_period
         
         # Variables for controlling the writing frequency        
         self.eta_rls_update_counter = 0
+        self.looprate_rls_update_counter = 0
         self.status_write_counter = 0
         self.statistics_save_counter = 0
         self.eta_estimate_freq = int(eta_window_duration/call_period)
+        self.looprate_estimate_freq = int(looprate_window_duration/call_period)
         self.status_write_freq = int(status_write_period/call_period)
         self.statistics_save_freq = int(statistics_save_period/call_period)
         
@@ -143,11 +194,16 @@ class MainStatusPublisher:
         self.time_previous += dt
         self.time_total += dt
     
-    def reset_eta(self):
-        """Resets memory variables estimation."""
+    def reset_estimators(self):
+        """Resets memory variables of estimators."""
+        # ETA estimator
         self.eta_estimator.reset()
         self.eta_last_measurement = None
         self.eta_rls_update_counter = 0
+        # Scheduler main loop frequency estimator
+        self.looprate_estimator.reset()
+        self.looprate_time_prev = None
+        self.looprate_rls_update_counter = 0
     
     def update(self,proc_status,num_tasks_in_queue,force=False):
         """
@@ -162,27 +218,35 @@ class MainStatusPublisher:
         force : bool, optional
             ``True`` to force writing both the status and the statistics files.
         """
-        # Determine if anything is to be done
+        # Update counters and set update booleans
+        # counter increment
         self.status_write_counter += 1
         self.statistics_save_counter += 1
-        save_statistics = (self.statistics_save_counter%
-                           self.statistics_save_freq)==0
+        self.eta_rls_update_counter += 1
+        self.looprate_rls_update_counter += 1
+        # boolean whether to execute corresponding action
+        save_statistics = (self.statistics_save_counter%self.statistics_save_freq)==0
+        write_status = (self.status_write_counter%self.status_write_freq)==0
+        update_eta = (self.eta_rls_update_counter%self.eta_estimate_freq)==0
+        update_looprate = (self.looprate_rls_update_counter%self.looprate_estimate_freq)==0
+        # reset counters
         if save_statistics:
             self.statistics_save_counter = 0 # reset
-        write_status = (self.status_write_counter%self.status_write_freq)==0
         if write_status:
             self.status_write_counter = 0 # reset
-        # Update the ETA estimate
-        self.eta_rls_update_counter += 1
-        update_eta = (self.eta_rls_update_counter%self.eta_estimate_freq)==0
+        if update_eta:
+            self.eta_rls_update_counter = 0 # reset
+        if update_looprate:
+            self.looprate_rls_update_counter = 0 # reset
+        # Compute the fraction of the set already partitioned ("volume filled")
         if force or save_statistics or write_status or update_eta:
             worker_idxs = list(range(len(self.worker_procs)))
             volume_filled_total = sum([
                 proc_status[i]['volume_filled_total'] for i in worker_idxs
                 if proc_status[i] is not None])
             volume_filled_frac = volume_filled_total/self.total_volume
+        # Update the ETA (i.e. remaining runtime) estimate
         if update_eta:
-            self.eta_rls_update_counter = 0 # reset
             # Measure the volume filling rate via finite-differencing
             first_call = self.eta_last_measurement is None
             self.update_time()
@@ -194,6 +258,17 @@ class MainStatusPublisher:
                                         self.eta_last_measurement['t'])
                 self.eta_estimator.update(rate_measurement)
             self.eta_last_measurement = new_measurement
+        # Update the schedular main loop frequency estimate estimate
+        if update_looprate:
+            # Measure the loop rate via finite-differencing
+            first_call = self.looprate_time_prev is None
+            self.update_time()
+            new_measurement = self.time_total
+            if not first_call:
+                rate_measurement = self.looprate_scale/(
+                    new_measurement-self.looprate_time_prev)
+                self.looprate_estimator.update(rate_measurement)
+            self.looprate_time_prev = new_measurement
         # Do the updates, if any
         if force or save_statistics or write_status:
             # Compute overall status
@@ -212,6 +287,7 @@ class MainStatusPublisher:
                                else None for i in worker_idxs]
             self.update_time()
             eta = self.eta_estimator.eta(volume_filled_frac)
+            scheduler_looprate = self.looprate_estimator.estimate
             overall_status = dict(num_proc_active=num_proc_active,
                                   num_proc_failed=num_proc_failed,
                                   num_tasks_in_queue=num_tasks_in_queue,
@@ -221,7 +297,8 @@ class MainStatusPublisher:
                                   time_elapsed=self.time_total,
                                   algorithms_running=algorithms_list,
                                   time_active_total=time_active_total,
-                                  eta=eta)
+                                  eta=eta,
+                                  scheduler_looprate=scheduler_looprate)
             # Save statistics
             if force or save_statistics:
                 with open(global_vars.STATISTICS_FILE,'ab') as f:
@@ -230,39 +307,52 @@ class MainStatusPublisher:
             if force or write_status:
                 with open(global_vars.STATUS_FILE,'w') as status_file:
                     status_file.write('\n'.join([
-                            '# overall',
-                            'number of processes active: %d'%(num_proc_active),
-                            'number of processes failed: %d'%(num_proc_failed),
-                            'number of tasks queue: %d'%(num_tasks_in_queue),
-                            'volume filled (total [%%]): %.4e'%(volume_filled_frac*100.),
-                            'simplex_count: %d'%(simplex_count_total),
-                            'time elapsed [s]: %d'%(self.time_total),
-                            'time active (total for all processes [s]): %.0f'%(time_active_total),
-                            'processes: %d x ecc, %d x lcss'%(
-                                sum([alg=='ecc' for alg in algorithms_list]),
-                                sum([alg=='lcss' for alg in algorithms_list])),
-                            'ETA [s]: %s'%(str(eta if eta is None else int(eta)))
-                            ])+'\n\n')
+                        '# overall',
+                        'number of processes active: %d'%(num_proc_active),
+                        'number of processes failed: %d'%(num_proc_failed),
+                        'number of tasks queue: %d'%(num_tasks_in_queue),
+                        'volume filled (total [%%]): %.4e'%(
+                            volume_filled_frac*100.),
+                        'simplex_count: %d'%(simplex_count_total),
+                        'time elapsed [s]: %d'%(self.time_total),
+                        'time active (total for all processes [s]): %.0f'%(
+                            time_active_total),
+                        'processes: %d x ecc, %d x lcss'%(
+                            sum([alg=='ecc' for alg in algorithms_list]),
+                            sum([alg=='lcss' for alg in algorithms_list])),
+                        'ETA [s]: %s'%(str(eta if eta is None else int(eta))),
+                        'Scheduler loop frequency [Hz]: %s'%(
+                            str(scheduler_looprate if scheduler_looprate is None
+                                else int(scheduler_looprate)))
+                    ])+'\n\n')
                     for i in worker_idxs:
                         data = proc_status[i]
                         if data is None:
                             continue
                         status_file.write('\n'.join([
-                                '# proc %d'%(self.worker_procs[i]),
-                                'status: %s'%(data['status']),
+                            '# proc %d'%(self.worker_procs[i]),
+                            'status: %s'%(data['status']),
                                 'algorithm: %s'%(data['algorithm']),
-                                'current branch:   %s'%(data['current_branch']),
-                                'current location: %s'%(data['current_location']),
-                                'volume filled (total [-]): %.4e'%(data['volume_filled_total']),
-                                'volume filled (current [%%]): %.4e'%(data['volume_filled_current']*100.),
-                                'simplex count (total [-]): %d'%(data['simplex_count_total']),
-                                'simplex count (current [-]): %d'%(data['simplex_count_current']),
-                                'time active (total [s]): %d'%(data['time_active_total']),
-                                'time active (current [s]): %d'%(data['time_active_current']),
-                                'time idle (total [s]): %d'%(data['time_idle']),
-                                'time running ecc (total [s]): %d'%(data['time_ecc']),
-                                'time running lcss (total [s]): %d'%(data['time_lcss'])
-                                ])+'\n\n')
+                            'current branch:   %s'%(data['current_branch']),
+                            'current location: %s'%(data['current_location']),
+                            'volume filled (total [-]): %.4e'%(
+                                data['volume_filled_total']),
+                            'volume filled (current [%%]): %.4e'%(
+                                data['volume_filled_current']*100.),
+                            'simplex count (total [-]): %d'%(
+                                data['simplex_count_total']),
+                            'simplex count (current [-]): %d'%(
+                                data['simplex_count_current']),
+                            'time active (total [s]): %d'%(
+                                data['time_active_total']),
+                            'time active (current [s]): %d'%(
+                                data['time_active_current']),
+                            'time idle (total [s]): %d'%(data['time_idle']),
+                            'time running ecc (total [s]): %d'%(
+                                data['time_ecc']),
+                            'time running lcss (total [s]): %d'%(
+                                data['time_lcss'])
+                        ])+'\n\n')
 
 class Scheduler:
     def __init__(self):
@@ -371,8 +461,13 @@ class Scheduler:
         worker_idxs = list(range(N_workers))
         worker2task = dict.fromkeys(worker_idxs)
         get_worker_proc_num = lambda i: self.worker_procs[i]
+        iteration_runtime = 0
         while True:
-            time.sleep(self.call_period)
+            # Maintain the desired global_vars.SCHEDULER_RATE
+            sleep_time = self.call_period-iteration_runtime
+            if sleep_time>0:
+                time.sleep(sleep_time)
+            iteration_tic = time.time()
             # Collect any new work from workers
             for i in worker_idxs:
                 tasks = self.task_msg[i].receive('all')
@@ -426,11 +521,14 @@ class Scheduler:
                                       (get_worker_proc_num(i)))
                     worker_proc_status[i] = status
             self.status_publisher.update(worker_proc_status,len(self.task_queue))
+            # Update iteration runtime measurement
+            iteration_toc = time.time()
+            iteration_runtime = iteration_toc-iteration_tic
             # Check termination criterion
             if not any(worker_active) and len(self.task_queue)==0:
                 self.status_publisher.update(worker_proc_status,
                                              len(self.task_queue),force=True)
-                self.status_publisher.reset_eta()
+                self.status_publisher.reset_estimators()
                 return
 
     def populate_queue(self,cursor,__location=''):

@@ -11,9 +11,9 @@ create_jobs()
 	ABS_FRAC=${ABS_FRACS[$i]}
 	REL_ERR=${REL_ERRS[$i]}
 	JOB_DURATION=${JOB_DURATIONS[$i]}
-	NODES=${NODES_LIST[$i]}
+	NUM_PROC=${NUM_PROC_LIST[$i]}
 
-	RUNTIME_DIR=$((python ./lib/prepare.py -e $EXAMPLE -N $NODES -p $MPC_N -a $ABS_FRAC -r $REL_ERR -t $JOB_DURATION) 2>&1)
+	RUNTIME_DIR=$((python ./lib/prepare.py -e $EXAMPLE -n $NUM_PROC -N $MPC_N -a $ABS_FRAC -r $REL_ERR -t $JOB_DURATION) 2>&1)
 
 	if $SUBMIT_JOBS; then
 	    sbatch -p stf -A stf $RUNTIME_DIR/hyak.slurm
@@ -26,7 +26,7 @@ MPC_N=5
 ABS_FRACS=(0.5)
 REL_ERRS=(2.0)
 JOB_DURATIONS=('10:00:00')
-NODES_LIST=(1)
+NUM_PROC_LIST=(500)
 
 create_jobs
 

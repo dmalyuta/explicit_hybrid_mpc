@@ -33,7 +33,7 @@ SCHEDULER_PROC = 0 # MPI rank of scheduler process
 ERROR = '>>> ' # Error message prefix
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(
     os.path.realpath(__file__)),os.pardir)) # Project root directory
-MAX_ASYNC_SEND = 10 # Max number of MPI messages that can be sent asynchronously by each process
+MAX_ASYNC_SEND = 50 # Max number of MPI messages that can be sent asynchronously by each process
 
 SCHEDULER_RATE = 1000. # [Hz] Frequency of the scheduler process main loop
 STATUS_WRITE_FREQUENCY = 1. # [Hz] Frequency for updating STATUS_FILE

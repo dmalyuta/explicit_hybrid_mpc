@@ -17,9 +17,9 @@ import global_vars
 """
 Some notes on usage:
 
-- When calling ``prepare.py``, you should call it with the -N and -t commandline
+- When calling ``prepare.py``, you should call it with the -n and -t commandline
   arguments in order to create a runtime directory properly.
-- When calling ``main.py``, you may omit the -N and -t commandline arguments and
+- When calling ``main.py``, you may omit the -n and -t commandline arguments and
   instead use --runtime-dir=<runtime directory name>, which should be the one
   that was created by ``prepare.py``. In fact, it is the directory of the
   ``run.sh`` file that you want to execute.
@@ -41,9 +41,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-e','--example',action='store',dest='example',type=str,
                         help='which MPC algorithm to run',required=True)
-    parser.add_argument('-N','--nodes',action='store',dest='nodes',type=int,
-                        help='number of nodes on which to run',required=False)
-    parser.add_argument('-p','--mpc-horizon',action='store',dest='N',type=int,
+    parser.add_argument('-n','--ntasks',action='store',dest='ntasks',type=int,
+                        help='number of processes to run',required=False)
+    parser.add_argument('-N','--mpc-horizon',action='store',dest='N',type=int,
                         help='MPC prediction horizon length',required=True)
     parser.add_argument('-a','--abs',action='store',dest='abs_frac',type=float,
                         help='fraction by which to shrink the invariant set for'
@@ -81,7 +81,7 @@ def make_runtime_dir_name(args):
     """
     timestamp = time.strftime("%d%m%YT%H%M%S")
     if args['runtime_dir'] is None:
-        dirname = 'runtime_%s_N_%d_abs_%s_rel_%s_%s'%(
+        dirname = '%s_N_%d_abs_%s_rel_%s_%s'%(
             args['example'],args['N'],str(args['abs_frac']).replace('.','_'),
             str(args['rel_err']).replace('.','_'),timestamp)
     else:
@@ -120,7 +120,7 @@ def make_runtime_dir():
     arguments. Creates the following runtime directory structure (more may
     be added into this directory by the scheduler and worker scripts):
         
-        runtime_<example>_N_<N>_abs_<abs>_rel_<rel>_<timestamp>
+        <example>_N_<N>_abs_<abs>_rel_<rel>_<timestamp>
         |
         +--- data
         |    |
@@ -147,7 +147,7 @@ def make_runtime_dir():
             '# ```',
             '# NB: Make sure that you have set the right Python virtualenv',
             '',
-            'mpirun python %s/lib/main.py -e %s -p %d -a %s -r %s --runtime-dir=%s'%
+            'mpirun python %s/lib/main.py -e %s -N %d -a %s -r %s --runtime-dir=%s'%
             (global_vars.PROJECT_DIR,args['example'],args['N'],
              str(args['abs_frac']),str(args['rel_err']),
              global_vars.RUNTIME_DIR.split('/')[-1])])+'\n\n')
@@ -166,7 +166,7 @@ def make_runtime_dir():
             '#SBATCH --workdir=%s'%(global_vars.RUNTIME_DIR),
             '#SBATCH --mail-type=ALL',
             '#SBATCH --mail-user=danylo@uw.edu',
-            '#SBATCH --nodes=%d'%(args['nodes']),
+            '#SBATCH --ntasks=%d --cpus-per-task=1'%(args['ntasks']),
             '',
             '# Module loading',
             'module load gcc_4.8.5-impi_2017 # Intel(R) MPI Library',
