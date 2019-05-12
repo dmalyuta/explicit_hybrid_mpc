@@ -3,7 +3,7 @@
 # Creates runtime directories for the explicit MPC partitions that you wish to
 # create. Optionally submits the jobs to the cluster.
 
-SUBMIT_JOBS=false # true submits jobs to the cluster
+SUBMIT_JOBS=true # true submits jobs to the cluster
 
 create_jobs()
 { # creates and (if specified) submits jobs
@@ -23,10 +23,10 @@ create_jobs()
 
 EXAMPLE=pendulum
 MPC_N=5
-ABS_FRACS=(0.5)
-REL_ERRS=(2.0)
-JOB_DURATIONS=('10:00:00')
-NUM_PROC_LIST=(500)
+ABS_FRACS=(0.1)
+REL_ERRS=(0.1)
+JOB_DURATIONS=('20:00:00')
+NUM_PROC_LIST=(1000)
 
 create_jobs
 
