@@ -484,42 +484,41 @@ class Scheduler:
                                               status))
                     worker_proc_status[i] = status
                     if status['status']=='idle':
-                        worker2task[str(i)] = None
                         idle_workers.append(i)
                         publish_idle_count()
+                        # Gather complete work, if any
+                        if worker2task[i] is not None:
+                            location = worker2task[i]['location']
+                            worker2task[i] = None # reset
+                            tools.info_print('gather completed branch at '
+                                             'location %s done by worker (%d)'%(
+                                                 location,get_worker_proc_num(i)))
+                            task_filename = (global_vars.DATA_DIR+
+                                             '/branch_%s.pkl'%(location))
+                            with open(task_filename,'rb') as f:
+                                finished_branch = pickle.load(f)
+                                os.remove(task_filename)
+                            with open(global_vars.BRANCHES_FILE,'ab') as f:
+                                pickle.dump(finished_branch,f)
             # Dispatch tasks to idle workers
             while len(self.task_queue)>0 and len(idle_workers)>0:
                 # Dispatch task to idle worker process
                 task = self.task_queue.pop()
                 idle_worker_idx = idle_workers.pop()
-                tools.info_print(('dispatching task to worker %d (%d '
+                tools.info_print(('dispatching task to worker (%d) (%d '
                                   'tasks left), data {}'%
                                   (get_worker_proc_num(idle_worker_idx),
                                    len(self.task_queue))).format(task))
                 tools.MPI.blocking_send(task,dest=
                                         get_worker_proc_num(idle_worker_idx),
                                         tag=global_vars.NEW_WORK_TAG)
-                worker2task[str(idle_worker_idx)] = task
+                worker2task[idle_worker_idx] = task
                 publish_idle_count()
-            # Collect completed work from workers
-            for i in worker_idxs:
-                # NB: there's just one message that should ever be in the buffer
-                finished_task = self.completed_work_msg[i].receive()
-                if finished_task is not None:
-                    tools.info_print('received finished branch from worker %d'%
-                                      (get_worker_proc_num(i)))
-                    location = worker2task[str(i)]['location']
-                    task_filename = global_vars.DATA_DIR+'/branch_%s.pkl'%(location)
-                    with open(task_filename,'rb') as f:
-                        finished_branch = pickle.load(f)
-                        os.remove(task_filename)
-                    with open(global_vars.BRANCHES_FILE,'ab') as f:
-                        pickle.dump(finished_branch,f)
             # Collect any new work from workers
             for i in worker_idxs:
                 tasks = self.task_msg[i].receive()
                 if tasks is not None:
-                    tools.info_print('received new task from worker %d'%
+                    tools.info_print('received new task from worker (%d)'%
                                       (get_worker_proc_num(i)))
                     self.task_queue.append(tasks)
             self.status_publisher.update(worker_proc_status,len(self.task_queue))

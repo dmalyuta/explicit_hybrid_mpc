@@ -33,7 +33,6 @@ SCHEDULER_PROC = 0 # MPI rank of scheduler process
 ERROR = '>>> ' # Error message prefix
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(
     os.path.realpath(__file__)),os.pardir)) # Project root directory
-MAX_ASYNC_SEND = 100 # Max number of MPI messages that can be sent asynchronously by each process
 MAX_RECURSION_LIMIT = 50 # Limit on how many times worker's ecc or lcss can
                          # recurse before submitting both left and right children to task queue
 

@@ -35,17 +35,10 @@ class WorkerStatusPublisher:
         self.volume_current = None # [-] Volume of current root simplex
         self.__write() # Initial write
     
-    def __write(self,blocking=False):
-        """
-        Write the data to file.
-
-        Parameters
-        ----------
-        blocking : bool, optional
-            If ``True``, send update in blocking mode.
-        """
-        tools.MPI.send(self.data,dest=global_vars.SCHEDULER_PROC,
-                       tag=global_vars.STATUS_TAG)
+    def __write(self):
+        """Publish the data."""
+        tools.MPI.nonblocking_send(self.data,dest=global_vars.SCHEDULER_PROC,
+                                   tag=global_vars.STATUS_TAG)
     
     def set_new_root_simplex(self,R,location,algorithm):
         """
@@ -69,7 +62,7 @@ class WorkerStatusPublisher:
         self.data['algorithm'] = algorithm
         self.__write()
     
-    def update(self,active=None,failed=False,volume_filled_increment=None,simplex_count_increment=None,location=None,algorithm=None,blocking=False):
+    def update(self,active=None,failed=False,volume_filled_increment=None,simplex_count_increment=None,location=None,algorithm=None):
         """
         Update the data.
         
@@ -87,8 +80,6 @@ class WorkerStatusPublisher:
             Current location in the tree.
         algorithm : {'ecc','lcss'}
             Which algorithm is to be run for the partitioning.
-        blocking : bool, optional
-            If ``True``, send update in blocking mode.
         """
         # Update time counters
         dt = time.time()-self.time_previous
@@ -122,7 +113,7 @@ class WorkerStatusPublisher:
         # Update algorithm
         if algorithm is not None:
             self.data['algorithm'] = algorithm
-        self.__write(blocking)
+        self.__write()
         
 class Worker:
     def __init__(self):
@@ -183,8 +174,8 @@ class Worker:
             (idle_worker_count>0 and not prioritize_self)):
             new_task = dict(branch_root=child,location=location,
                             action=which_alg)
-            tools.MPI.send(new_task,dest=global_vars.SCHEDULER_PROC,
-                           tag=global_vars.NEW_BRANCH_TAG)
+            tools.MPI.nonblocking_send(new_task,dest=global_vars.SCHEDULER_PROC,
+                                       tag=global_vars.NEW_BRANCH_TAG)
         else:
             self.status_publisher.update(algorithm=which_alg)
             self.alg_call(which_alg,child,location)
@@ -405,9 +396,9 @@ class Worker:
                 with open(global_vars.DATA_DIR+'/branch_%s.pkl'%
                           (data['location']),'wb') as f:
                     pickle.dump(data,f)
-                tools.MPI.blocking_send(1,dest=global_vars.SCHEDULER_PROC,
-                                        tag=global_vars.FINISHED_BRANCH_TAG)
-                self.status_publisher.update(active=False,blocking=True)
+                tools.info_print('completed task at location = %s, '
+                                 'notifying scheduler'%(data['location']))
+                self.status_publisher.update(active=False)
 
 def main():
     """Runs the worker process."""

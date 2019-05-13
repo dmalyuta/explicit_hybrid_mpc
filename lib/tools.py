@@ -26,9 +26,6 @@ from tree import Tree, NodeData
 class MPICommunicator:
     def __init__(self):
         self.comm = mpi4py_MPI.COMM_WORLD # MPI inter-process communicator
-        self.async_send_counter = 0 # Counter of how many messages were send asynchronously
-        self.req = None # Latest non-blocking MPI send Request object
-        self.block_counter = 0 # Counter for how many times blocking send had to occur
 
     def size(self):
         """Get total number of processes."""
@@ -41,7 +38,6 @@ class MPICommunicator:
     def global_sync(self):
         """MPI barrier global synchronization."""
         self.comm.Barrier()
-        return None
 
     def broadcast(self,*args,**kwargs):
         """MPI broadcast (blocking)."""
@@ -62,29 +58,6 @@ class MPICommunicator:
     def blocking_send(self,*args,**kwargs):
         """MPI send message, blocking."""
         return self.comm.ssend(*args,**kwargs)
-
-    def send(self,*args,**kwargs):
-        """Wrapper for MPI blocking/non-blocking sending respecting
-        MAX_ASYNC_SEND."""
-        self.async_send_counter += 1
-        receive_posted = False if self.req is None else self.req.test()[0]
-        if receive_posted:
-            # matching receive is posted
-            # https://www.mcs.anl.gov/research/projects/mpi/sendmode.html
-            # see also:
-            # https://stackoverflow.com/questions/21512975/what-is-the-difference-between-isend-and-issend
-            self.async_send_counter = 0 # reset
-        overflow = self.async_send_counter>global_vars.MAX_ASYNC_SEND
-        if self.async_send_counter>global_vars.MAX_ASYNC_SEND:
-            # wait for matching receive to post
-            self.block_counter += 1
-            info_print('MPI message overflow - waiting '
-                       '(occured %d times)...'%(self.block_counter))
-            self.req.wait()
-            self.async_send_counter = 0 # reset
-        self.req = self.nonblocking_send(*args,**kwargs)
-        return self.req
-            
 
 MPI = MPICommunicator() # Object that abstracts calls to MPI library routines
 
