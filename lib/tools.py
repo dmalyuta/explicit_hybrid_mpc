@@ -14,6 +14,7 @@ import numpy as np
 import numpy.linalg as la
 import scipy.linalg as sla
 import scipy.spatial as scs
+import _pickle
 
 import mpi4py
 # (maybe) resolves UnpicklingError (https://tinyurl.com/mpi4py-unpickling-issue)
@@ -87,7 +88,12 @@ class NonblockingMPIMessageReceiver:
         The received data, ``None`` if no data received. The type depends on
         what is sent by the source process.
         """
-        msg_available,data = self.req.test()
+        try:
+            msg_available,data = self.req.test()
+        except _pickle.UnpicklingError as e:
+            error_print('unpickling error in MPI (%s), recovering by assuming '
+                        'no message received'%(str(e)))
+            msg_available = False
         if msg_available:
             self.update_receiver()
             return data

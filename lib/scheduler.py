@@ -419,9 +419,6 @@ class Scheduler:
         self.task_msg = [tools.NonblockingMPIMessageReceiver(
             source=worker_proc_num,tag=global_vars.NEW_BRANCH_TAG)
                          for worker_proc_num in self.worker_procs]
-        self.completed_work_msg = [tools.NonblockingMPIMessageReceiver(
-            source=worker_proc_num,tag=global_vars.FINISHED_BRANCH_TAG)
-                                   for worker_proc_num in self.worker_procs]
         self.status_msg = [tools.NonblockingMPIMessageReceiver(
             source=worker_proc_num,tag=global_vars.STATUS_TAG)
                            for worker_proc_num in self.worker_procs]
