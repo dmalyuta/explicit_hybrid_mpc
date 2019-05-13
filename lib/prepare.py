@@ -169,7 +169,7 @@ def make_runtime_dir():
             '#SBATCH --ntasks=%d --cpus-per-task=1'%(args['ntasks']),
             '',
             '# Module loading',
-            'module load gcc_4.8.5-impi_2017 # Intel(R) MPI Library',
+            'module load contrib/gcc/6.2.0_mpich-3.2 # MPI',
             '',
             '# Run script',
             'source activate py36 # Python 3.6.7 virtualenv with necessary packages (MOSEK + requirements.txt)',

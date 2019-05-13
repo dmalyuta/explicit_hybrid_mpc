@@ -27,6 +27,7 @@ class MPICommunicator:
         self.comm = mpi4py_MPI.COMM_WORLD # MPI inter-process communicator
         self.async_send_counter = 0 # Counter of how many messages were send asynchronously
         self.req = None # Latest non-blocking MPI send Request object
+        self.block_counter = 0 # Counter for how many times blocking send had to occur
 
     def size(self):
         """Get total number of processes."""
@@ -75,6 +76,9 @@ class MPICommunicator:
         overflow = self.async_send_counter>global_vars.MAX_ASYNC_SEND
         if self.async_send_counter>global_vars.MAX_ASYNC_SEND:
             # wait for matching receive to post
+            self.block_counter += 1
+            info_print('MPI message overflow - waiting '
+                       '(occured %d times)...'%(self.block_counter))
             self.req.wait()
             self.async_send_counter = 0 # reset
         self.req = self.nonblocking_send(*args,**kwargs)

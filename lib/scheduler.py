@@ -161,7 +161,7 @@ class MainStatusPublisher:
         # [s] time constant for loop rate exponential forgetting
         looprate_time_constant = 10.
         # memory variable of previous call time
-        self.looprate_time_prev = None
+        self.looprate_last_measurement = None
         self.looprate_estimator = RLS(call_period=looprate_window_duration,
                                       time_constant=looprate_time_constant)
         # multiply measured rate by this scaling factor to recover the true
@@ -169,15 +169,13 @@ class MainStatusPublisher:
         # loop rate**)
         self.looprate_scale = looprate_window_duration/call_period
         
-        # Variables for controlling the writing frequency        
-        self.eta_rls_update_counter = 0
-        self.looprate_rls_update_counter = 0
-        self.status_write_counter = 0
-        self.statistics_save_counter = 0
-        self.eta_estimate_freq = int(eta_window_duration/call_period)
-        self.looprate_estimate_freq = int(looprate_window_duration/call_period)
-        self.status_write_freq = int(status_write_period/call_period)
-        self.statistics_save_freq = int(statistics_save_period/call_period)
+        # Variables for controlling the writing frequency
+        self.write_time_prev = dict(eta=None,looprate=None,
+                                    status=None,statistics=None)
+        self.write_period = dict(eta=eta_window_duration,
+                                 looprate=looprate_window_duration,
+                                 status=status_write_period,
+                                 statistics=statistics_save_period)
         
     def update_time(self):
         """
@@ -199,11 +197,11 @@ class MainStatusPublisher:
         # ETA estimator
         self.eta_estimator.reset()
         self.eta_last_measurement = None
-        self.eta_rls_update_counter = 0
+        self.write_time_prev['eta'] = None
         # Scheduler main loop frequency estimator
         self.looprate_estimator.reset()
-        self.looprate_time_prev = None
-        self.looprate_rls_update_counter = 0
+        self.looprate_last_measurement = None
+        self.write_time_prev['looprate'] = None
     
     def update(self,proc_status,num_tasks_in_queue,force=False):
         """
@@ -218,26 +216,29 @@ class MainStatusPublisher:
         force : bool, optional
             ``True`` to force writing both the status and the statistics files.
         """
-        # Update counters and set update booleans
-        # counter increment
-        self.status_write_counter += 1
-        self.statistics_save_counter += 1
-        self.eta_rls_update_counter += 1
-        self.looprate_rls_update_counter += 1
-        # boolean whether to execute corresponding action
-        save_statistics = (self.statistics_save_counter%self.statistics_save_freq)==0
-        write_status = (self.status_write_counter%self.status_write_freq)==0
-        update_eta = (self.eta_rls_update_counter%self.eta_estimate_freq)==0
-        update_looprate = (self.looprate_rls_update_counter%self.looprate_estimate_freq)==0
-        # reset counters
+        self.update_time()
+        # Determine what updates to do
+        save_statistics = (self.write_time_prev['statistics'] is None or
+                           self.time_total-self.write_time_prev['statistics']>=
+                           self.write_period['statistics'])
+        write_status = (self.write_time_prev['status'] is None or
+                        self.time_total-self.write_time_prev['status']>=
+                        self.write_period['status'])
+        update_eta = (self.write_time_prev['eta'] is None or
+                      self.time_total-self.write_time_prev['eta']>=
+                      self.write_period['eta'])
+        update_looprate = (self.write_time_prev['looprate'] is None or
+                           self.time_total-self.write_time_prev['looprate']>=
+                           self.write_period['looprate'])
+        # reset times
         if save_statistics:
-            self.statistics_save_counter = 0 # reset
+            self.write_time_prev['statistics'] = self.time_total
         if write_status:
-            self.status_write_counter = 0 # reset
+            self.write_time_prev['status'] = self.time_total
         if update_eta:
-            self.eta_rls_update_counter = 0 # reset
+            self.write_time_prev['eta'] = self.time_total
         if update_looprate:
-            self.looprate_rls_update_counter = 0 # reset
+            self.write_time_prev['looprate'] = self.time_total
         # Compute the fraction of the set already partitioned ("volume filled")
         if force or save_statistics or write_status or update_eta:
             worker_idxs = list(range(len(self.worker_procs)))
@@ -249,7 +250,6 @@ class MainStatusPublisher:
         if update_eta:
             # Measure the volume filling rate via finite-differencing
             first_call = self.eta_last_measurement is None
-            self.update_time()
             new_measurement = dict(t=self.time_total,v=volume_filled_frac)
             if not first_call:
                 rate_measurement = (new_measurement['v']-
@@ -261,14 +261,14 @@ class MainStatusPublisher:
         # Update the schedular main loop frequency estimate estimate
         if update_looprate:
             # Measure the loop rate via finite-differencing
-            first_call = self.looprate_time_prev is None
+            first_call = self.looprate_last_measurement is None
             self.update_time()
             new_measurement = self.time_total
             if not first_call:
                 rate_measurement = self.looprate_scale/(
-                    new_measurement-self.looprate_time_prev)
+                    new_measurement-self.looprate_last_measurement)
                 self.looprate_estimator.update(rate_measurement)
-            self.looprate_time_prev = new_measurement
+            self.looprate_last_measurement = new_measurement
         # Do the updates, if any
         if force or save_statistics or write_status:
             # Compute overall status
@@ -282,10 +282,12 @@ class MainStatusPublisher:
             time_active_total = sum([
                 proc_status[i]['time_active_total'] for i in worker_idxs if
                 proc_status[i] is not None])
+            time_idle_total = sum([
+                proc_status[i]['time_idle'] for i in worker_idxs if
+                proc_status[i] is not None])
             algorithms_list = [proc_status[i]['algorithm'] if proc_status[i] is
                                not None and proc_status[i]['status']=='active'
                                else None for i in worker_idxs]
-            self.update_time()
             eta = self.eta_estimator.eta(volume_filled_frac)
             scheduler_looprate = self.looprate_estimator.estimate
             overall_status = dict(num_proc_active=num_proc_active,
@@ -297,6 +299,7 @@ class MainStatusPublisher:
                                   time_elapsed=self.time_total,
                                   algorithms_running=algorithms_list,
                                   time_active_total=time_active_total,
+                                  time_idle_total=time_idle_total,
                                   eta=eta,
                                   scheduler_looprate=scheduler_looprate)
             # Save statistics
@@ -317,13 +320,16 @@ class MainStatusPublisher:
                         'time elapsed [s]: %d'%(self.time_total),
                         'time active (total for all processes [s]): %.0f'%(
                             time_active_total),
+                        'time idle (total for all processes [s]): %.0f'%(
+                            time_idle_total),
                         'processes: %d x ecc, %d x lcss'%(
                             sum([alg=='ecc' for alg in algorithms_list]),
                             sum([alg=='lcss' for alg in algorithms_list])),
-                        'ETA [s]: %s'%(str(eta if eta is None else int(eta))),
+                        'ETA [s]: %s'%(str(eta if eta is None else
+                                           int(np.round(eta)))),
                         'Scheduler loop frequency [Hz]: %s'%(
                             str(scheduler_looprate if scheduler_looprate is None
-                                else int(scheduler_looprate)))
+                                else int(np.round(scheduler_looprate))))
                     ])+'\n\n')
                     for i in worker_idxs:
                         data = proc_status[i]
