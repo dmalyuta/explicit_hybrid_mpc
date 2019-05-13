@@ -24,7 +24,7 @@ BRANCHES_FILE = None # Tree branches, used for tree building
 IDLE_COUNT_FILE = None # Idle process count
 
 SOLVER_OPTIONS = dict(solver='MOSEK', verbose=False) # Optimization solver options
-VERBOSE = 1 # 0: no printing; 1: print error msgs; 2: print error+info msgs
+VERBOSE = 2 # 0: no printing; 1: print error msgs; 2: print error+info msgs
 STATUS_TAG = 11 # MPI Isend tag for worker status
 NEW_WORK_TAG = 22 # MPI Isend tag for new work for a worker process
 NEW_BRANCH_TAG = 33 # MPI Isend tag for new branch root to put into queue

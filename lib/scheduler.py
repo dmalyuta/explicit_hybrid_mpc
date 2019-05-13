@@ -470,71 +470,121 @@ class Scheduler:
         iteration_runtime = 0
         while True:
             # Maintain the desired global_vars.SCHEDULER_RATE
+            tools.info_print('line 0')
             sleep_time = self.call_period-iteration_runtime
+            tools.info_print('line 1')
             if sleep_time>0:
+                tools.info_print('line 2')
                 time.sleep(sleep_time)
+            tools.info_print('line 3')
             iteration_tic = time.time()
-            # Collect any new work from workers
-            for i in worker_idxs:
-                tasks = self.task_msg[i].receive()
-                if tasks is not None:
-                    tools.info_print('received new task from worker %d'%
-                                      (get_worker_proc_num(i)))
-                    self.task_queue.append(tasks)
             # Dispatch tasks to idle workers
+            tools.info_print('line 4')
             if len(self.task_queue)>0 and not all(worker_active):
+                tools.info_print('line 5')
                 for i in worker_idxs:
+                    tools.info_print('line 6')
                     if not worker_active[i]:
                         # Dispatch task to worker process worker_proc_num
+                        tools.info_print('line 7')
                         task = self.task_queue.pop()
+                        tools.info_print('line 8')
                         tools.info_print(('dispatching task to worker %d (%d '
                                            'tasks left), data {}'%
                                            (get_worker_proc_num(i),
                                             len(self.task_queue))).format(task))
+                        tools.info_print('line 9')
                         tools.MPI.blocking_send(task,
                                                 dest=get_worker_proc_num(i),
                                                 tag=global_vars.NEW_WORK_TAG)
+                        tools.info_print('line 10')
                         worker2task[str(i)] = task
+                        tools.info_print('line 11')
                         worker_active[i] = True
+                    tools.info_print('line 12')
                     if len(self.task_queue)==0:
+                        tools.info_print('line 13')
                         break # no more tasks to dispatch
+                tools.info_print('line 14')
                 publish_idle_count()
             # Collect completed work from workers
+            tools.info_print('line 15')
             any_tasks_completed = False
+            tools.info_print('line 16')
             for i in worker_idxs:
                 # NB: there's just one message that should ever be in the buffer
+                tools.info_print('line 17')
                 finished_task = self.completed_work_msg[i].receive()
+                tools.info_print('line 18')
                 if finished_task is not None:
+                    tools.info_print('line 19')
                     tools.info_print('received finished branch from worker %d'%
                                       (get_worker_proc_num(i)))
+                    tools.info_print('line 20')
                     location = worker2task[str(i)]['location']
+                    tools.info_print('line 21')
                     task_filename = global_vars.DATA_DIR+'/branch_%s.pkl'%(location)
+                    tools.info_print('line 22')
                     with open(task_filename,'rb') as f:
+                        tools.info_print('line 23')
                         finished_branch = pickle.load(f)
+                        tools.info_print('line 24')
                         os.remove(task_filename)
+                    tools.info_print('line 25')
                     with open(global_vars.BRANCHES_FILE,'ab') as f:
+                        tools.info_print('line 26')
                         pickle.dump(finished_branch,f)
+                    tools.info_print('line 27')
                     worker2task[str(i)] = None
+                    tools.info_print('line 28')
                     worker_active[i] = False
+                    tools.info_print('line 29')
                     any_tasks_completed = True
+            tools.info_print('line 30')
             if any_tasks_completed:
+                tools.info_print('line 31')
                 publish_idle_count()
-            # Update status file
+            # Collect any new work from workers
+            tools.info_print('line 32')
             for i in worker_idxs:
+                tools.info_print('line 33')
+                tasks = self.task_msg[i].receive()
+                tools.info_print('line 34')
+                if tasks is not None:
+                    tools.info_print('line 35')
+                    tools.info_print('received new task from worker %d'%
+                                      (get_worker_proc_num(i)))
+                    tools.info_print('line 36')
+                    self.task_queue.append(tasks)
+            # Update status file
+            tools.info_print('line 37')
+            for i in worker_idxs:
+                tools.info_print('line 38')
                 status = self.status_msg[i].receive()
+                tools.info_print('line 39')
                 if status is not None:
+                    tools.info_print('line 40')
                     tools.info_print('got status update from worker (%d)'%
                                       (get_worker_proc_num(i)))
+                    tools.info_print('line 41')
                     worker_proc_status[i] = status
+            tools.info_print('line 42')
             self.status_publisher.update(worker_proc_status,len(self.task_queue))
             # Update iteration runtime measurement
+            tools.info_print('line 43')
             iteration_toc = time.time()
+            tools.info_print('line 44')
             iteration_runtime = iteration_toc-iteration_tic
             # Check termination criterion
+            tools.info_print('line 45')
             if not any(worker_active) and len(self.task_queue)==0:
+                tools.info_print('line 46')
+                tools.info_print('exiting the spin() main loop!')
                 self.status_publisher.update(worker_proc_status,
                                              len(self.task_queue),force=True)
+                tools.info_print('line 47')
                 self.status_publisher.reset_estimators()
+                tools.info_print('line 48')
                 return
 
     def populate_queue(self,cursor,__location=''):
