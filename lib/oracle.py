@@ -242,8 +242,40 @@ class Oracle:
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
         max_lhs = np.max(V_delta_R)
+        if global_vars.SOLVER_OPTIONS['solver']==cvx.MOSEK:
+            # (Numerical) failure mode fix
+            #
+            # Commit: 304d1a58c94a15e4bdf9f23bd84937db0ac90e6c
+            #
+            # Description: running
+            # ```
+            # main.py -e pendulum -N 5 -a 0.1 -r 0.1 --runtime-dir=<RUNTIME_DIR>
+            # ```
+            # at location 1111111111111111111111111111111111111111111111
+            # 111111111100100000000011011 the call to
+            # self.min_over_simplex_for_this_delta fails because MOSEK's
+            # heuristics incorrectly choose to solve the dual instead of the
+            # primal. This returns status UNKNOWN and fails the optimization.
+            # See https://docs.mosek.com/9.0/toolbox/presolver.html#index-4 for
+            # more info.
+            #
+            # Fix: as suggested in https://docs.mosek.com/9.0/pythonapi/
+            # debugging-numerical.html#further-suggestions, I force MOSEK to
+            # solve the primal problem.
+            import mosek
+            import copy
+            force_primal = {mosek.iparam.intpnt_solve_form:
+                            mosek.solveform.primal}
+            solver_options_bk = copy.deepcopy(global_vars.SOLVER_OPTIONS)
+            if 'mosek_params' in global_vars.SOLVER_OPTIONS.keys():
+                global_vars.SOLVER_OPTIONS['mosek_params'].update(force_primal)
+            else:
+                global_vars.SOLVER_OPTIONS['mosek_params'] = force_primal
         min_lhs = self.min_over_simplex_for_this_delta.solve(
             **global_vars.SOLVER_OPTIONS)
+        if global_vars.SOLVER_OPTIONS['solver']==cvx.MOSEK:
+            # Restore original solver options
+            global_vars.SOLVER_OPTIONS = solver_options_bk
         V_delta_theta = self.P_theta_delta(theta=theta_star,delta=delta_star)[1]
         rhs = max(self.eps_a,self.eps_r*V_delta_theta)
         return max_lhs-min_lhs<rhs
@@ -270,6 +302,9 @@ class Oracle:
             Parameter value at which delta_start is more optimal.
         vx_inputs_and_costs : list
             List of vertex optimal inputs and costs using delta_star.
+        variation_small_enough : boolean
+            If ``True``, variation of the optimal cost using the commutation
+            delta_ref is small enough over the simplex R.
         """
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
@@ -290,20 +325,27 @@ class Oracle:
             theta_star = self.theta_in_simplex.value
             if delta_star is None:
                 vx_inputs_and_costs = None
-                return delta_star,theta_star,vx_inputs_and_costs
+                variation_small_enough = None
+                return delta_star,theta_star,vx_inputs_and_costs,variation_small_enough
             
-            # Check if P_theta_delta is feasible at each vertex
+            # Check that subsequent optimization problems are feasible, which
+            # makes sure that the MICP did not choose delta_star "too
+            # ambitiously" (i.e. by relaxing the constraints somewhat)
             try:
+                # 1) Check if P_theta_delta is feasible at each vertex
                 vx_inputs_and_costs = self.__compute_vx_inputs_and_costs(
                     R,delta_star)
-                return delta_star,theta_star,vx_inputs_and_costs
+                # 2) Check if in_variability_ball is feasible
+                variation_small_enough = self.in_variability_ball(
+                    R,V_delta_R,delta_ref,delta_star,theta_star)
+                return delta_star,theta_star,vx_inputs_and_costs,variation_small_enough
             except:
                 # Not feasible at some vertex -> solver must have returned an
                 # infeasible solution for bar_D_delta_R (numerical troubles)
                 tools.error_print('bar_D_delta_R output failed for R={}, '
                                   'V_delta_R={}, delta_ref={}'.format(
                                       R.tolist(),V_delta_R.tolist(),
-                                      delta_ref.to_list()))
+                                      delta_ref.tolist()))
                 delta_neq_other_deltas += self.__delta_neq_constraint(delta_star)
 
     def __compute_vx_inputs_and_costs(self,R,delta):
