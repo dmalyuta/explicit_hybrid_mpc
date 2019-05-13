@@ -138,8 +138,7 @@ class Worker:
                 return self.lcss(branch,location)
         self.alg_call = alg_call
     
-    def offload_child_computation(self,child,location,which_alg,
-                                  prioritize_self=False,force_offload=False):
+    def offload_child_computation(self,child,location,which_alg):
         """
         Offload partitioning for child to another worker process.
         
@@ -151,36 +150,10 @@ class Worker:
             Location of the child in the overall tree.
         which_alg : {'ecc','lcss'}
             Which algorithm is to be run for the partitioning.
-        prioritize_self : bool, optional
-            If ``True``, ignore worker count but do respect recursion limit in
-            terms of assigning work to self.
-        force_offload : bool, optional
-            If ``True``, submit task to queue and not to self, no matter what.
         """
-        with open(global_vars.IDLE_COUNT_FILE,'rb') as f:
-            try:
-                idle_worker_count = pickle.load(f)
-            except EOFError:
-                # This may occur if the file is currently being written to by
-                # the scheduler. In this case, conservatively assume that there
-                # are no idle workers
-                idle_worker_count = 0
-        tools.info_print('idle worker count = %d'%(idle_worker_count))
-        recursion_depth = (len(location)-
-                           len(self.status_publisher.data['current_branch']))
-        recurs_limit_reached = recursion_depth>global_vars.MAX_RECURSION_LIMIT
-        if recurs_limit_reached:
-            tools.error_print('recursion limit reached - submitting task'
-                              ' to queue')
-        if (force_offload or ((idle_worker_count>0 and not prioritize_self) or
-                              recurs_limit_reached)):
-            new_task = dict(branch_root=child,location=location,
-                            action=which_alg)
-            tools.MPI.send(new_task,dest=global_vars.SCHEDULER_PROC,
-                           tag=global_vars.NEW_BRANCH_TAG)
-        else:
-            self.status_publisher.update(algorithm=which_alg)
-            self.alg_call(which_alg,child,location)
+        new_task = dict(branch_root=child,location=location,action=which_alg)
+        tools.MPI.send(new_task,dest=global_vars.SCHEDULER_PROC,
+                       tag=global_vars.NEW_BRANCH_TAG)
     
     def ecc(self,node,location):
         """
@@ -218,8 +191,7 @@ class Worker:
                 self.status_publisher.update(simplex_count_increment=1)
                 # Recursive call for each resulting simplex
                 self.offload_child_computation(node.left,location+'0','ecc')
-                self.offload_child_computation(node.right,location+'1','ecc',
-                                               prioritize_self=True)
+                self.offload_child_computation(node.right,location+'1','ecc')
             else:
                 # Assign feasible commutation to simplex
                 Nvx = node.data.vertices.shape[0]
@@ -269,8 +241,7 @@ class Worker:
             node.grow(child_left,child_right)
             self.status_publisher.update(simplex_count_increment=1)
             self.offload_child_computation(node.left,location+'0','lcss')
-            self.offload_child_computation(node.right,location+'1','lcss',
-                                           prioritize_self=True)
+            self.offload_child_computation(node.right,location+'1','lcss')
     
         def update_vertex_costs(v_mid,v_combo_idx,delta,old_vertex_inputs,
                                 old_vertex_costs):
@@ -340,8 +311,7 @@ class Worker:
                 node.data.commutation = delta_star
                 node.data.vertex_costs = new_vertex_costs
                 node.data.vertex_inputs = new_vertex_inputs
-                self.offload_child_computation(node,location,'ecc',
-                                               force_offload=True)
+                self.offload_child_computation(node,location,'ecc')
             else:
                 S_1,S_2,v_idx = tools.split_along_longest_edge(
                     node.data.vertices)

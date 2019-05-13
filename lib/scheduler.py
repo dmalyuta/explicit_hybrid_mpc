@@ -430,10 +430,6 @@ class Scheduler:
         for file in glob.glob(global_vars.DATA_DIR+'/branch_*.pkl'):
             os.remove(file)
         
-        # Initialize idle worker count to all workers idle
-        with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
-            pickle.dump(len(self.worker_procs),f)
-        
         # Wait for all slaves to setup
         tools.MPI.global_sync() 
     
@@ -448,21 +444,8 @@ class Scheduler:
         Manages worker processes until the partitioning process is finished,
         then shuts the processes down and exits.
         """
-        def publish_idle_count():
-            """
-            Communicate to worker processes how many more workers are idle than
-            there are tasks in the queue. If there are more workers idle then
-            there are tasks in the queue, we want currently active workers to
-            offload some of their work to these "slacking" workers.
-            """
-            num_workers_idle = N_workers-sum(worker_active)
-            num_workers_with_no_work = max(num_workers_idle-len(self.task_queue),0)
-            tools.info_print('idle worker count = %d'%(num_workers_idle))
-            with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
-                pickle.dump(num_workers_with_no_work,f)
-                
         N_workers = len(self.worker_procs)
-        worker_active = [False]*N_workers
+        idle_workers = [i for i in range(N_workers)]
         worker_proc_status = [None]*N_workers
         worker_idxs = list(range(N_workers))
         worker2task = dict.fromkeys(worker_idxs)
@@ -480,33 +463,23 @@ class Scheduler:
             iteration_tic = time.time()
             # Dispatch tasks to idle workers
             tools.info_print('line 4')
-            if len(self.task_queue)>0 and not all(worker_active):
+            while len(self.task_queue)>0 and len(idle_workers)>0:
+                # Dispatch task to idle worker process
                 tools.info_print('line 5')
-                for i in worker_idxs:
-                    tools.info_print('line 6')
-                    if not worker_active[i]:
-                        # Dispatch task to worker process worker_proc_num
-                        tools.info_print('line 7')
-                        task = self.task_queue.pop()
-                        tools.info_print('line 8')
-                        tools.info_print(('dispatching task to worker %d (%d '
-                                           'tasks left), data {}'%
-                                           (get_worker_proc_num(i),
-                                            len(self.task_queue))).format(task))
-                        tools.info_print('line 9')
-                        tools.MPI.blocking_send(task,
-                                                dest=get_worker_proc_num(i),
-                                                tag=global_vars.NEW_WORK_TAG)
-                        tools.info_print('line 10')
-                        worker2task[str(i)] = task
-                        tools.info_print('line 11')
-                        worker_active[i] = True
-                    tools.info_print('line 12')
-                    if len(self.task_queue)==0:
-                        tools.info_print('line 13')
-                        break # no more tasks to dispatch
-                tools.info_print('line 14')
-                publish_idle_count()
+                task = self.task_queue.pop()
+                tools.info_print('line 6')
+                idle_worker_idx = idle_workers.pop()
+                tools.info_print('line 7')
+                tools.info_print(('dispatching task to worker %d (%d '
+                                  'tasks left), data {}'%
+                                  (get_worker_proc_num(idle_worker_idx),
+                                   len(self.task_queue))).format(task))
+                tools.info_print('line 8')
+                tools.MPI.blocking_send(task,dest=
+                                        get_worker_proc_num(idle_worker_idx),
+                                        tag=global_vars.NEW_WORK_TAG)
+                tools.info_print('line 9')
+                worker2task[str(idle_worker_idx)] = task
             # Collect completed work from workers
             tools.info_print('line 15')
             any_tasks_completed = False
@@ -537,13 +510,9 @@ class Scheduler:
                     tools.info_print('line 27')
                     worker2task[str(i)] = None
                     tools.info_print('line 28')
-                    worker_active[i] = False
+                    idle_workers.append(i)
                     tools.info_print('line 29')
                     any_tasks_completed = True
-            tools.info_print('line 30')
-            if any_tasks_completed:
-                tools.info_print('line 31')
-                publish_idle_count()
             # Collect any new work from workers
             tools.info_print('line 32')
             for i in worker_idxs:
@@ -577,7 +546,7 @@ class Scheduler:
             iteration_runtime = iteration_toc-iteration_tic
             # Check termination criterion
             tools.info_print('line 45')
-            if not any(worker_active) and len(self.task_queue)==0:
+            if len(idle_workers)==N_workers and len(self.task_queue)==0:
                 tools.info_print('line 46')
                 tools.info_print('exiting the spin() main loop!')
                 self.status_publisher.update(worker_proc_status,
