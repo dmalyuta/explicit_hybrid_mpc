@@ -430,6 +430,10 @@ class Scheduler:
         for file in glob.glob(global_vars.DATA_DIR+'/branch_*.pkl'):
             os.remove(file)
         
+        # Initialize idle worker count to all workers idle
+        with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
+            pickle.dump(len(self.worker_procs),f)
+        
         # Wait for all slaves to setup
         tools.MPI.global_sync() 
     
@@ -444,6 +448,19 @@ class Scheduler:
         Manages worker processes until the partitioning process is finished,
         then shuts the processes down and exits.
         """
+        def publish_idle_count():
+            """
+            Communicate to worker processes how many more workers are idle than
+            there are tasks in the queue. If there are more workers idle then
+            there are tasks in the queue, we want currently active workers to
+            offload some of their work to these "slacking" workers.
+            """
+            num_workers_idle = len(idle_workers)
+            num_workers_with_no_work = max(num_workers_idle-len(self.task_queue),0)
+            tools.info_print('idle worker count = %d'%(num_workers_idle))
+            with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
+                pickle.dump(num_workers_with_no_work,f)
+                
         N_workers = len(self.worker_procs)
         idle_workers = []
         worker_proc_status = [None]*N_workers
@@ -469,6 +486,7 @@ class Scheduler:
                     if status['status']=='idle':
                         worker2task[str(i)] = None
                         idle_workers.append(i)
+                        publish_idle_count()
             # Dispatch tasks to idle workers
             while len(self.task_queue)>0 and len(idle_workers)>0:
                 # Dispatch task to idle worker process
@@ -482,6 +500,7 @@ class Scheduler:
                                         get_worker_proc_num(idle_worker_idx),
                                         tag=global_vars.NEW_WORK_TAG)
                 worker2task[str(idle_worker_idx)] = task
+                publish_idle_count()
             # Collect completed work from workers
             for i in worker_idxs:
                 # NB: there's just one message that should ever be in the buffer

@@ -21,6 +21,7 @@ STATISTICS_FILE = None # Overall statistics
 TREE_FILE = None # Overall tree
 ETA_RLS_FILE = None # Overall tree
 BRANCHES_FILE = None # Tree branches, used for tree building
+IDLE_COUNT_FILE = None # Idle process count
 
 SOLVER_OPTIONS = dict(solver='MOSEK', verbose=False) # Optimization solver options
 VERBOSE = 2 # 0: no printing; 1: print error msgs; 2: print error+info msgs

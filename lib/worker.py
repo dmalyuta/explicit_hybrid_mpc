@@ -152,24 +152,35 @@ class Worker:
         which_alg : {'ecc','lcss'}
             Which algorithm is to be run for the partitioning.
         prioritize_self : bool, optional
-            If ``True``, assign work to self while respecting recursion limit.
+            If ``True``, ignore worker count but do respect recursion limit in
+            terms of assigning work to self.
         force_offload : bool, optional
             If ``True``, submit task to queue and not to self, no matter what.
         """
+        with open(global_vars.IDLE_COUNT_FILE,'rb') as f:
+            try:
+                idle_worker_count = pickle.load(f)
+            except EOFError:
+                # This may occur if the file is currently being written to by
+                # the scheduler. In this case, conservatively assume that there
+                # are no idle workers
+                idle_worker_count = 0
+        tools.info_print('idle worker count = %d'%(idle_worker_count))
         recursion_depth = (len(location)-
                            len(self.status_publisher.data['current_branch']))
         recurs_limit_reached = recursion_depth>global_vars.MAX_RECURSION_LIMIT
         if recurs_limit_reached:
             tools.error_print('recursion limit reached - submitting task'
                               ' to queue')
-        if prioritize_self and not (force_offload or recurs_limit_reached):
-            self.status_publisher.update(algorithm=which_alg)
-            self.alg_call(which_alg,child,location)
-        else:
+        if (force_offload or recurs_limit_reached or
+            (idle_worker_count>0 and not prioritize_self)):
             new_task = dict(branch_root=child,location=location,
                             action=which_alg)
             tools.MPI.send(new_task,dest=global_vars.SCHEDULER_PROC,
-                           tag=global_vars.NEW_BRANCH_TAG)            
+                           tag=global_vars.NEW_BRANCH_TAG)
+        else:
+            self.status_publisher.update(algorithm=which_alg)
+            self.alg_call(which_alg,child,location)
     
     def ecc(self,node,location):
         """
