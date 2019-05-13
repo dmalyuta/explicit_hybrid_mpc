@@ -257,7 +257,8 @@ class Worker:
             self.offload_child_computation(node.left,location+'0','lcss')
             self.lcss(node.right,location+'1')
     
-        def update_vertex_costs(v_mid,v_combo_idx,delta,old_vertex_inputs,old_vertex_costs):
+        def update_vertex_costs(v_mid,v_combo_idx,delta,old_vertex_inputs,
+                                old_vertex_costs):
             """
             Compute a new set of optimal costs at the simplex vertices.
             
@@ -266,58 +267,73 @@ class Worker:
             v_mid : np.array
                 New vertex at which the current simplex is to be split into two.
             v_combo_idx : tuple
-                Tuple of two elements corresponding to row index of the two vertices
-                constituting the longest edge. The first vertex is removed from S_1 and
-                the second vertex is removed from S_2, substituted for v_mid.
+                Tuple of two elements corresponding to row index of the two
+                vertices constituting the longest edge. The first vertex is
+                removed from S_1 and the second vertex is removed from S_2,
+                substituted for v_mid.
             delta : np.array
-                The commutation that is to be associated with the two new simplices.
+                The commutation that is to be associated with the two new
+                simplices.
             old_vertex_costs : np.array
                 Array of existing pre-computed vertex inputs.
             old_vertex_costs : np.array
                 Array of existing pre-computed vertex costs.
             """
-            u_opt_v_mid, V_delta_v_mid = self.oracle.P_theta_delta(theta=v_mid,delta=delta)[:2]
-            vertex_inputs_S_1,vertex_inputs_S_2 = old_vertex_inputs.copy(),old_vertex_inputs.copy()
-            vertex_costs_S_1,vertex_costs_S_2 = old_vertex_costs.copy(),old_vertex_costs.copy()
+            u_opt_v_mid, V_delta_v_mid = self.oracle.P_theta_delta(
+                theta=v_mid,delta=delta)[:2]
+            vertex_inputs_S_1,vertex_inputs_S_2 = (old_vertex_inputs.copy(),
+                                                   old_vertex_inputs.copy())
+            vertex_costs_S_1,vertex_costs_S_2 = (old_vertex_costs.copy(),
+                                                 old_vertex_costs.copy())
             vertex_inputs_S_1[v_combo_idx[0]] = u_opt_v_mid
             vertex_inputs_S_2[v_combo_idx[1]] = u_opt_v_mid
             vertex_costs_S_1[v_combo_idx[0]] = V_delta_v_mid
             vertex_costs_S_2[v_combo_idx[1]] = V_delta_v_mid
-            return vertex_inputs_S_1,vertex_inputs_S_2,vertex_costs_S_1,vertex_costs_S_2
+            return (vertex_inputs_S_1,vertex_inputs_S_2,
+                    vertex_costs_S_1,vertex_costs_S_2)
     
         self.status_publisher.update(location=location)
-        delta_star,theta_star,new_vertex_inputs_and_costs = (
-            self.oracle.bar_D_delta_R(R=node.data.vertices,
-                                      V_delta_R=node.data.vertex_costs,
-                                      delta_ref=node.data.commutation))
-        bar_D_delta_R_infeasible = delta_star is None
-        if bar_D_delta_R_infeasible:
+        delta_epsilon_suboptimal = self.oracle.bar_E_delta_R(
+            R=node.data.vertices,V_delta_R=node.data.vertex_costs)
+        if delta_epsilon_suboptimal:
             # Close leaf
             node.data.is_epsilon_suboptimal = True
             node.data.timestamp = time.time()
             volume_closed = tools.simplex_volume(node.data.vertices)
             self.status_publisher.update(volume_filled_increment=volume_closed)
         else:
-            Nvx = node.data.vertices.shape[0]
-            new_vertex_costs = np.array([new_vertex_inputs_and_costs[i][1]
-                                         for i in range(Nvx)])
-            new_vertex_inputs = np.array([new_vertex_inputs_and_costs[i][0]
-                                          for i in range(Nvx)])
-            if self.oracle.in_variability_ball(R=node.data.vertices,
-                                               V_delta_R=node.data.vertex_costs,
-                                               delta_ref=node.data.commutation,
-                                               delta_star=delta_star,
-                                               theta_star=theta_star):
+            delta_star,theta_star,new_vx_inputs_costs,cost_varies_little = (
+                self.oracle.bar_D_delta_R(R=node.data.vertices,
+                                          V_delta_R=node.data.vertex_costs,
+                                          delta_ref=node.data.commutation))
+            bar_D_delta_R_feasible = delta_star is not None
+            if not bar_D_delta_R_feasible:
+                # delta does not change in this case, so the same vertex inputs
+                # and costs
+                delta_star = node.data.commutation
+                new_vertex_costs = node.data.vertex_costs
+                new_vertex_inputs = node.data.vertex_inputs
+            else:
+                # extract the vertex inputs and costs associated with the better
+                # commutation choice
+                Nvx = node.data.vertices.shape[0]
+                new_vertex_costs = np.array([new_vx_inputs_costs[i][1]
+                                             for i in range(Nvx)])
+                new_vertex_inputs = np.array([new_vx_inputs_costs[i][0]
+                                              for i in range(Nvx)])
+            if bar_D_delta_R_feasible and cost_varies_little:
                 node.data.commutation = delta_star
                 node.data.vertex_costs = new_vertex_costs
                 node.data.vertex_inputs = new_vertex_inputs
                 self.lcss(node,location)
             else:
-                S_1,S_2,v_idx = tools.split_along_longest_edge(node.data.vertices)
+                S_1,S_2,v_idx = tools.split_along_longest_edge(
+                    node.data.vertices)
                 # Re-compute vertex costs
                 v_mid = S_1[v_idx[0]]
-                vertex_inputs_S_1,vertex_inputs_S_2,vertex_costs_S_1,vertex_costs_S_2 = update_vertex_costs(
-                        v_mid,v_idx,delta_star,new_vertex_inputs,new_vertex_costs)
+                (vertex_inputs_S_1,vertex_inputs_S_2,
+                 vertex_costs_S_1,vertex_costs_S_2) = update_vertex_costs(
+                     v_mid,v_idx,delta_star,new_vertex_inputs,new_vertex_costs)
                 # Make children
                 child_left = NodeData(vertices=S_1,commutation=delta_star,
                                       vertex_costs=vertex_costs_S_1,
@@ -329,11 +345,11 @@ class Worker:
 
     def spin(self):
         """
-        A loop which waits (by passive blocking) for the roots of a new branch to
-        partition to be received from the scheduler process. When received, the
-        branch is partitioned. When done, the partitioned branch ("grown tree") is
-        sent back to the scheduler. The scheduler is responsible for aborting this
-        loop.
+        A loop which waits (by passive blocking) for the roots of a new branch
+        to partition to be received from the scheduler process. When received,
+        the branch is partitioned. When done, the partitioned branch ("grown
+        tree") is sent back to the scheduler. The scheduler is responsible for
+        aborting this loop.
         """
         while True:
             # Block until new data is received from scheduler
@@ -361,7 +377,8 @@ class Worker:
                 except:
                     self.status_publisher.update(failed=True)
                     raise
-                # Save completed branch and notify scheduler that it is available
+                # Save completed branch and notify scheduler that it is
+                # available
                 with open(global_vars.DATA_DIR+'/branch_%s.pkl'%
                           (data['location']),'wb') as f:
                     pickle.dump(data,f)

@@ -56,13 +56,12 @@ class Oracle:
         u_theta = [self.mpc.make_ux()['u'] for _ in range(self.mpc.n_x+1)]
         self.vertices = [cvx.Parameter(self.mpc.n_x)
                          for _ in range(self.mpc.n_x+1)]
-        feasibility_constraints = []
+        self.feasibility_constraints = []
         for i in range(self.mpc.n_x+1):
             # Add a set of constraints for each vertex
-            feasibility_constraints += self.mpc.make_constraints(
+            self.feasibility_constraints += self.mpc.make_constraints(
                 self.vertices[i],x_theta[i],u_theta[i],self.mpc.delta,
                 delta_sum_constraint=True if i==0 else False)
-        self.V_R_constraints = feasibility_constraints
         
         # Make problems that allow verifying simplex-is-in-variability-ball
         # variables
@@ -82,20 +81,23 @@ class Oracle:
                                                 self.mpc.delta)+in_simplex
         self.min_over_simplex_for_any_delta = cvx.Problem(self.mpc.cost,
                                                           constraints)
-        
-        # Make D_delta^R, the MINLP that searches for a more optimal commutation
-        # variables
+
+        # Make \bar E^R, the MINLP that verifies if the commutation is
+        # epsilon-suboptimal
         self.vertex_costs = cvx.Parameter(self.mpc.n_x+1)
         self.bar_V = sum([self.alpha[i]*self.vertex_costs[i]
                           for i in range(self.mpc.n_x+1)])
-        # constraints
-        self.bar_D_delta_R_constraints = self.mpc.make_constraints(
+        bar_E_delta_R_constraints = self.mpc.make_constraints(
             self.theta_in_simplex,self.mpc.x,self.mpc.u,
             self.mpc.delta)+in_simplex
-        self.bar_D_delta_R_constraints += [
-            self.bar_V-self.mpc.V >= self.eps_a,
-            self.bar_V-self.mpc.V >= self.eps_r*self.mpc.V]
-        self.bar_D_delta_R_constraints += feasibility_constraints
+        bar_E_delta_R_constraints += [self.bar_V-self.mpc.V>=self.eps_a,
+                                self.bar_V-self.mpc.V>=self.eps_r*self.mpc.V]
+        self.bar_E_delta_R_problem = cvx.Problem(cvx.Minimize(0),bar_E_delta_R_constraints)
+        
+        # Make D_delta^R, the MINLP that searches for a more optimal commutation
+        # variables
+        self.bar_D_delta_R_constraints = (bar_E_delta_R_constraints+
+                                          self.feasibility_constraints)
 
     def P_theta(self,theta,check_feasibility=False):
         """
@@ -194,7 +196,7 @@ class Oracle:
         delta_neq_other_deltas = []
         while True:
             # Solve V_R
-            V_R = cvx.Problem(cvx.Minimize(0),self.V_R_constraints+
+            V_R = cvx.Problem(cvx.Minimize(0),self.feasibility_constraints+
                               delta_neq_other_deltas)
             V_R.solve(**global_vars.SOLVER_OPTIONS)
             delta_feas = self.mpc.delta.value
@@ -279,6 +281,32 @@ class Oracle:
         V_delta_theta = self.P_theta_delta(theta=theta_star,delta=delta_star)[1]
         rhs = max(self.eps_a,self.eps_r*V_delta_theta)
         return max_lhs-min_lhs<rhs
+
+    def bar_E_delta_R(self,R,V_delta_R):
+        """
+        Verify if commutation, whose affine cost over-approximator is V_delta_R,
+        is epsilon-suboptimal in R.
+
+        Parameters
+        ----------
+        R : np.array
+            2D array whose rows are simplex vertices (length self.mpc.n_x+1).
+        V_delta_R : np.array
+            Array of cost at corresponding vertex in R.
+
+        Returns
+        -------
+        eps_suboptimal : bool
+            True if delta_ref is epsilon-suboptimal.
+        """
+        for k in range(self.mpc.n_x+1):
+            self.vertices[k].value = R[k]
+        self.vertex_costs.value = V_delta_R
+        self.bar_E_delta_R_problem.solve(**global_vars.SOLVER_OPTIONS)
+        # If could not find a satisfactory delta_star, it means epsilon
+        # suboptimality holds
+        eps_suboptimal = self.mpc.delta.value is None
+        return eps_suboptimal        
     
     def bar_D_delta_R(self,R,V_delta_R,delta_ref):
         """
@@ -302,51 +330,50 @@ class Oracle:
             Parameter value at which delta_start is more optimal.
         vx_inputs_and_costs : list
             List of vertex optimal inputs and costs using delta_star.
-        variation_small_enough : boolean
+        var_small : boolean
             If ``True``, variation of the optimal cost using the commutation
             delta_ref is small enough over the simplex R.
         """
         for k in range(self.mpc.n_x+1):
             self.vertices[k].value = R[k]
         self.vertex_costs.value = V_delta_R
-        # Solve \bar D_delta^R problem
         # **Secret sauce**: procedurally add new delta_ref's to list of
-        # commutations that delta should not equal, in case D_delta^R comes up
-        # with deltas for which P_theta_delta is infeasible at the vertices of
-        # R (due to numerical issues - mathematically this should not happen)
-        delta_neq_other_deltas = []
+        # commutations that delta should not equal, in case D_delta^R
+        # comes up with deltas for which P_theta_delta is infeasible at
+        # the vertices of R (due to numerical issues - mathematically
+        # this should not happen)
+        delta_blacklist = self.__delta_neq_constraint(delta_ref)
         while True:
-            # Solve \bar D_delta^R
             bar_D_delta_R = cvx.Problem(cvx.Minimize(0),
                                         self.bar_D_delta_R_constraints+
-                                        delta_neq_other_deltas)
+                                        delta_blacklist)                
             bar_D_delta_R.solve(**global_vars.SOLVER_OPTIONS)
             delta_star = self.mpc.delta.value
-            theta_star = self.theta_in_simplex.value
+            theta_star = self.theta_in_simplex.value                
             if delta_star is None:
                 vx_inputs_and_costs = None
-                variation_small_enough = None
-                return delta_star,theta_star,vx_inputs_and_costs,variation_small_enough
-            
-            # Check that subsequent optimization problems are feasible, which
-            # makes sure that the MICP did not choose delta_star "too
+                var_small = None
+                return delta_star,theta_star,vx_inputs_and_costs,var_small
+            # Check that subsequent optimization problems are feasible,
+            # which makes sure that the MICP did not choose delta_star "too
             # ambitiously" (i.e. by relaxing the constraints somewhat)
             try:
                 # 1) Check if P_theta_delta is feasible at each vertex
                 vx_inputs_and_costs = self.__compute_vx_inputs_and_costs(
                     R,delta_star)
                 # 2) Check if in_variability_ball is feasible
-                variation_small_enough = self.in_variability_ball(
-                    R,V_delta_R,delta_ref,delta_star,theta_star)
-                return delta_star,theta_star,vx_inputs_and_costs,variation_small_enough
+                var_small = self.in_variability_ball(R,V_delta_R,delta_ref,
+                                                     delta_star,theta_star)
+                return delta_star,theta_star,vx_inputs_and_costs,var_small
             except:
-                # Not feasible at some vertex -> solver must have returned an
-                # infeasible solution for bar_D_delta_R (numerical troubles)
+                # Not feasible at some vertex -> solver must have returned
+                # an infeasible solution for bar_D_delta_R (numerical
+                # troubles)
                 tools.error_print('bar_D_delta_R output failed for R={}, '
                                   'V_delta_R={}, delta_ref={}'.format(
                                       R.tolist(),V_delta_R.tolist(),
                                       delta_ref.tolist()))
-                delta_neq_other_deltas += self.__delta_neq_constraint(delta_star)
+                delta_blacklist += self.__delta_neq_constraint(delta_star)
 
     def __compute_vx_inputs_and_costs(self,R,delta):
         """
