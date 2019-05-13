@@ -368,13 +368,13 @@ class Worker:
             else:
                 tools.info_print('got branch at location = %s'%
                                   (data['location']))
+                self.status_publisher.update(active=True)
                 # Get data about the branch to be worked on
                 branch = data['branch_root']
                 branch_location = data['location']
                 self.status_publisher.set_new_root_simplex(branch.data.vertices,
                                                            branch_location,
                                                            data['action'])
-                self.status_publisher.update(active=True)
                 # Do work on this branch (i.e. partition this simplex)
                 try:
                     tools.info_print('calling algorithm')
