@@ -104,41 +104,20 @@ class NonblockingMPIMessageReceiver:
         self.update_receiver = update_receiver
         self.update_receiver()
         
-    def receive(self,which='oldest'):
+    def receive(self):
         """
         Non-blocking receive message, if one is available.
-        
-        Parameters
-        ----------
-        which : {'oldest','newest','all'}, optional
-            Which message in the buffer to receive; 'oldest' gets the first
-            message in the queue, 'newest' receives the last message in the
-            queue, and 'all' gets all the messages in the queue. 'newest' and
-            'all' clear the queue in the process.
         
         Returns
         -------
         The received data, ``None`` if no data received. The type depends on
-        what is sent by the source process. If which=='all', the type is a list.
+        what is sent by the source process.
         """
-        data_list = []
-        while True:
-            msg_available,data = self.req.test()
-            if msg_available:
-                self.update_receiver()
-                data_list.append(data)
-                if which=='oldest':
-                    break
-            else:
-                break
-        if len(data_list)==0:
-            return None
-        elif which=='oldest':
-            return data_list[0]
-        elif which=='newest':
-            return data_list[-1]
-        else:
-            return data_list
+        msg_available,data = self.req.test()
+        if msg_available:
+            self.update_receiver()
+            return data
+        return None
 
 def info_print(msg):
     """

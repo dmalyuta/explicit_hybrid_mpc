@@ -476,11 +476,11 @@ class Scheduler:
             iteration_tic = time.time()
             # Collect any new work from workers
             for i in worker_idxs:
-                tasks = self.task_msg[i].receive('all')
+                tasks = self.task_msg[i].receive()
                 if tasks is not None:
-                    tools.info_print('received %d new tasks from worker %d'%
-                                      (len(tasks),get_worker_proc_num(i)))
-                    self.task_queue.extend(tasks)
+                    tools.info_print('received new task from worker %d'%
+                                      (get_worker_proc_num(i)))
+                    self.task_queue.append(tasks)
             # Dispatch tasks to idle workers
             if len(self.task_queue)>0 and not all(worker_active):
                 for i in worker_idxs:
@@ -521,7 +521,7 @@ class Scheduler:
                 publish_idle_count()
             # Update status file
             for i in worker_idxs:
-                status = self.status_msg[i].receive('newest')
+                status = self.status_msg[i].receive()
                 if status is not None:
                     tools.info_print('got status update from worker (%d)'%
                                       (get_worker_proc_num(i)))
