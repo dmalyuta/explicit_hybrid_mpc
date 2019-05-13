@@ -7,6 +7,7 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import sys
 import math
 import itertools
 import numpy as np
@@ -132,6 +133,7 @@ def info_print(msg):
     if global_vars.VERBOSE==2:
         print('%s (%d): %s'%('scheduler' if rank==global_vars.SCHEDULER_PROC
                              else 'worker',rank,msg))
+        sys.stdout.flush()
 
 def error_print(msg):
     """
@@ -146,6 +148,7 @@ def error_print(msg):
     if global_vars.VERBOSE>=1:
         print('%s (%d): %s'%('scheduler' if rank==global_vars.SCHEDULER_PROC
                              else 'worker',rank,msg))
+        sys.stdout.flush()
 
 def simplex_volume(R):
     """
