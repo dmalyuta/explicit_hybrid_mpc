@@ -7,8 +7,10 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import copy
 import numpy as np
 import cvxpy as cvx
+import mosek
 
 import global_vars
 import tools
@@ -264,8 +266,6 @@ class Oracle:
             # Fix: as suggested in https://docs.mosek.com/9.0/pythonapi/
             # debugging-numerical.html#further-suggestions, I force MOSEK to
             # solve the primal problem.
-            import mosek
-            import copy
             force_primal = {mosek.iparam.intpnt_solve_form:
                             mosek.solveform.primal}
             solver_options_bk = copy.deepcopy(global_vars.SOLVER_OPTIONS)
@@ -342,15 +342,53 @@ class Oracle:
         # comes up with deltas for which P_theta_delta is infeasible at
         # the vertices of R (due to numerical issues - mathematically
         # this should not happen)
-        delta_blacklist = self.__delta_neq_constraint(delta_ref)
+        delta_blacklist = []#self.__delta_neq_constraint(delta_ref)
         while True:
             bar_D_delta_R = cvx.Problem(cvx.Minimize(0),
                                         self.bar_D_delta_R_constraints+
-                                        delta_blacklist)                
+                                        delta_blacklist)
             bar_D_delta_R.solve(**global_vars.SOLVER_OPTIONS)
+            if (self.mpc.delta.value is None and
+                global_vars.SOLVER_OPTIONS['solver']==cvx.MOSEK):
+                # (Numerical) failure mode fix
+                #
+                # Commit: d2cd83cd0cc02038332a3e9415c1ddb9b50d2a67
+                #
+                # Description: running
+                # ```
+                # main.py -e pendulum -N 5 -a 0.1 -r 0.1 --runtime-dir=<RUNTIME_DIR>
+                # ```
+                # at location 11111111111111111111111111111111111111111111111111
+                # 1111111111111111111010101001000000... MOSEK keeps failing
+                # because of some numerical troubles (Gurobi appears to work).
+                #
+                # Fix: as sugested in https://docs.mosek.com/9.0/pythonapi/
+                # debugging-numerical.html#further-suggestions, turning off
+                # presolve and forcing primal solves the problem.
+                mosek_numerics = {mosek.iparam.intpnt_solve_form:
+                                  mosek.solveform.primal,
+                                  mosek.iparam.presolve_use:
+                                  mosek.presolvemode.off}
+                solver_options_bk = copy.deepcopy(global_vars.SOLVER_OPTIONS)
+                if 'mosek_params' in global_vars.SOLVER_OPTIONS.keys():
+                    global_vars.SOLVER_OPTIONS['mosek_params'].update(
+                        mosek_numerics)
+                else:
+                    global_vars.SOLVER_OPTIONS['mosek_params'] = mosek_numerics
+                bar_D_delta_R.solve(**global_vars.SOLVER_OPTIONS)
+                if global_vars.SOLVER_OPTIONS['solver']==cvx.MOSEK:
+                    # Restore original solver options
+                    global_vars.SOLVER_OPTIONS = solver_options_bk
             delta_star = self.mpc.delta.value
-            theta_star = self.theta_in_simplex.value                
-            if delta_star is None:
+            theta_star = self.theta_in_simplex.value
+            if delta_star is None or np.array_equal(delta_star.astype(int),
+                                                    delta_ref.astype(int)):
+                # Treat finding delta_star==delta_ref the same way as the
+                # problem being infeasible --> but this seems to be a
+                # numerically better way to go about it (MOSEK doesn't seem to
+                # fail in this case...)
+                delta_star = None
+                theta_star = None
                 vx_inputs_and_costs = None
                 var_small = None
                 return delta_star,theta_star,vx_inputs_and_costs,var_small
@@ -434,4 +472,3 @@ class Oracle:
                                      for k in range(self.mpc.N)
                                      for i in range(self.mpc.delta_size)])>=1]
         return delta_neq_delta_ref
-        
