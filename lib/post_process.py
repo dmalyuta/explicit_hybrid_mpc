@@ -7,6 +7,7 @@ B. Acikmese -- ACL, University of Washington
 Copyright 2019 University of Washington. All rights reserved.
 """
 
+import os
 import pickle
 import numpy as np
 import numpy.linalg as la
@@ -25,12 +26,16 @@ matplotlib.rc('text', usetex=True)
 
 class PostProcessor:
     def __init__(self):
-        self.setup()
-
-    def setup(self):
-        """Sets up the post-processor."""
         prepare.set_global_variables()
         self.load_data()
+
+        self.setup_mpc_called = False # Switch to run MPC setup
+
+    def setup_mpc(self):
+        """Sets up the MPC controllers."""
+        if self.setup_mpc_called:
+            return
+        self.setup_mpc_called = True
         # Implicit MPC oracle
         self.invariant_set,_,oracle = example()
         self.implicit_mpc = mpc_library.ImplicitMPC(oracle)
@@ -65,6 +70,42 @@ class PostProcessor:
         # Load tree
         with open(global_vars.TREE_FILE,'rb') as f:
             self.tree = pickle.load(f)
+
+    def tree_stats(self):
+        """
+        Print the tree statistics: depth and leaf count.
+        """
+        def get_depth(cursor):
+            """Compute tree depth by recursing through it. Do not count the
+            depth levels of the initial Delaunay triangulation."""
+            if cursor.is_leaf():
+                return 1
+            else:
+                one = 1 if cursor.right.data is not None else 0
+                return one+max(get_depth(cursor.left),get_depth(cursor.right))
+
+        def count_leaves(cursor):
+            """Count the number of leaves of the tree."""
+            if cursor.is_leaf():
+                return 1
+            else:
+                return count_leaves(cursor.left)+count_leaves(cursor.right)
+
+        def get_size():
+            """Get tree file size in MB."""
+            return os.path.getsize(global_vars.TREE_FILE)/2**20
+
+        print('Partitioning runtime CPU [hr]  : %.2f'%(
+            self.statistics['time_active_total'][-1]/3600))
+        print('Partitioning runtime wall [hr] : %.2f'%(
+            self.statistics['time_elapsed'][-1]/3600))
+        print('Max cores active               : %d'%(
+            np.max(self.statistics['num_proc_active'])))
+        print('Average cores active           : %d'%(
+            np.round(np.average(self.statistics['num_proc_active']))))
+        print('Tree depth                     : %d'%(get_depth(self.tree)))
+        print('Tree leaf count                : %d'%(count_leaves(self.tree)))
+        print('Tree file size [MB]            : %d'%(get_size()))
 
     def progress(self):
         """
@@ -115,11 +156,12 @@ class PostProcessor:
             plot_func(sim_explicit,sim_implicit) where the two arguments are
             the output of Simulator:run().
         """
+        self.setup_mpc()
         # Simulate explicit MPC
         simulator = Simulator(self.explicit_mpc,T)
         sim_explicit = simulator.run(x_init,label='explicit')
         # Simulate implicit MPC
-        simulator = Simulator(self.implicit_mpc,0.5)#T)
+        simulator = Simulator(self.implicit_mpc,T)
         sim_implicit = simulator.run(x_init,label='implicit')
         # Called plotting functions
         for plot_func in plot_funcs:
@@ -137,6 +179,7 @@ class PostProcessor:
         N : int
             How many Monte Carlo trials to perform (for each implementation).
         """
+        self.setup_mpc()
         parameter_samples = self.invariant_set.randomPoint(N=N)
         implicit_eval_times = np.empty(N)
         explicit_eval_times = np.empty(N)
@@ -240,34 +283,28 @@ def state_history(sim_explicit,sim_implicit):
 def main():
     """Run post-processing for data specified via command-line."""
     post_processor = PostProcessor()
-    # Progress plot
+    # Tree statistics
+    post_processor.tree_stats()
+    # Algorithm progress plot
     post_processor.progress()
-    # Total input usage comparison (implicit vs. explicit)
-    if 'cwh' in global_vars.EXAMPLE:
-        # CWH satellite example
-        orbit_count = 3 # How many orbits to simulate for
-        wo = mpc_library.satellite_parameters()['wo'] # [rad/s] Orbital rate
-        T_per_orbit = (2.*np.pi/wo) # [s] Time for one orbit
-        T = T_per_orbit*orbit_count # [s] Simulation duration
-        x_init = np.zeros(post_processor.implicit_mpc.plant.n) # Initial condition
-        post_processor.simulate_and_plot(x_init,T,[
-            lambda exp,imp: total_delta_v_usage(exp,imp,t_scale=1/T_per_orbit)])
-    else:
-        # Inverted pendulum example
-        T = 100 # [s] Simulation duration
-        #x_init = np.array([0,np.deg2rad(0.1),0,0]) # Initial condition
-        x_init = np.array([0,np.deg2rad(3),0.1,0]) # Initial condition
-        post_processor.simulate_and_plot(x_init,T,[input_history,state_history])
-        
-        
-        
-        # post_processor.total_input_usage(T=T,t_scale=1/T_per_orbit,
-        #                                  u_scale=[1e6,1e3],
-        #                                  x_label='Number of orbits',
-        #                                  y_label='$\Delta v$ usage [$\mu$m/s]')
-        
-    # Evaluation time statistics
-    post_processor.evaluation_time(N=100)
+    # # Simulation comparison (implicit vs. explicit)
+    # if 'cwh' in global_vars.EXAMPLE:
+    #     # CWH satellite example
+    #     orbit_count = 3 # How many orbits to simulate for
+    #     wo = mpc_library.satellite_parameters()['wo'] # [rad/s] Orbital rate
+    #     T_per_orbit = (2.*np.pi/wo) # [s] Time for one orbit
+    #     T = T_per_orbit*orbit_count # [s] Simulation duration
+    #     x_init = np.zeros(post_processor.implicit_mpc.plant.n) # Initial condition
+    #     post_processor.simulate_and_plot(x_init,T,[
+    #         lambda exp,imp: total_delta_v_usage(exp,imp,t_scale=1/T_per_orbit)])
+    # else:
+    #     # Inverted pendulum example
+    #     T = 100 # [s] Simulation duration
+    #     #x_init = np.array([0,np.deg2rad(0.1),0,0]) # Initial condition
+    #     x_init = np.array([0,np.deg2rad(3),0.1,0]) # Initial condition
+    #     post_processor.simulate_and_plot(x_init,T,[input_history,state_history])
+    # # Evaluation time statistics
+    # post_processor.evaluation_time(N=100)
 
 if __name__=='__main__':
     main()
