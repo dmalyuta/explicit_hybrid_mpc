@@ -11,6 +11,8 @@ import os
 import time
 import glob
 import pickle
+import copy
+import threading
 import numpy as np
 
 import global_vars
@@ -156,24 +158,16 @@ class MainStatusPublisher:
                                            store_history=False)
 
         # Scheduler main loop rate estimator
-        # [s] duration of window for finite-differencing to estimate loop rate
-        looprate_window_duration = 2.
         # [s] time constant for loop rate exponential forgetting
-        looprate_time_constant = 10.
-        # memory variable of previous call time
-        self.looprate_last_measurement = None
-        self.looprate_estimator = RLS(call_period=looprate_window_duration,
-                                      time_constant=looprate_time_constant)
-        # multiply measured rate by this scaling factor to recover the true
-        # scheduler loop rate (**Assumes that call_period==ideal scheduler main
-        # loop rate**)
-        self.looprate_scale = looprate_window_duration/call_period
+        looprate_time_constant = 100.
+        self.looprate_estimator = [RLS(call_period=call_period,
+                                       time_constant=looprate_time_constant)
+                                   for i in range(3)]
         
         # Variables for controlling the writing frequency
         self.write_time_prev = dict(eta=None,looprate=None,
                                     status=None,statistics=None)
         self.write_period = dict(eta=eta_window_duration,
-                                 looprate=looprate_window_duration,
                                  status=status_write_period,
                                  statistics=statistics_save_period)
         
@@ -199,11 +193,11 @@ class MainStatusPublisher:
         self.eta_last_measurement = None
         self.write_time_prev['eta'] = None
         # Scheduler main loop frequency estimator
-        self.looprate_estimator.reset()
-        self.looprate_last_measurement = None
+        for i in range(3):
+            self.looprate_estimator[i].reset()
         self.write_time_prev['looprate'] = None
     
-    def update(self,proc_status,num_tasks_in_queue,force=False):
+    def update(self,proc_status,num_tasks_in_queue,looprates,force=False):
         """
         Write the main status file.
         
@@ -213,6 +207,8 @@ class MainStatusPublisher:
             List of dicts of individual worker process statuses.
         num_tasks_in_queue : int
             Number of tasks in the queue.
+        looprates : list
+            A list holding the [publisher,dispatcher,collector] looprates.
         force : bool, optional
             ``True`` to force writing both the status and the statistics files.
         """
@@ -227,9 +223,6 @@ class MainStatusPublisher:
         update_eta = (self.write_time_prev['eta'] is None or
                       self.time_total-self.write_time_prev['eta']>=
                       self.write_period['eta'])
-        update_looprate = (self.write_time_prev['looprate'] is None or
-                           self.time_total-self.write_time_prev['looprate']>=
-                           self.write_period['looprate'])
         # reset times
         if save_statistics:
             self.write_time_prev['statistics'] = self.time_total
@@ -237,8 +230,6 @@ class MainStatusPublisher:
             self.write_time_prev['status'] = self.time_total
         if update_eta:
             self.write_time_prev['eta'] = self.time_total
-        if update_looprate:
-            self.write_time_prev['looprate'] = self.time_total
         # Compute the fraction of the set already partitioned ("volume filled")
         if force or save_statistics or write_status or update_eta:
             worker_idxs = list(range(len(self.worker_procs)))
@@ -259,16 +250,8 @@ class MainStatusPublisher:
                 self.eta_estimator.update(rate_measurement)
             self.eta_last_measurement = new_measurement
         # Update the schedular main loop frequency estimate estimate
-        if update_looprate:
-            # Measure the loop rate via finite-differencing
-            first_call = self.looprate_last_measurement is None
-            self.update_time()
-            new_measurement = self.time_total
-            if not first_call:
-                rate_measurement = self.looprate_scale/(
-                    new_measurement-self.looprate_last_measurement)
-                self.looprate_estimator.update(rate_measurement)
-            self.looprate_last_measurement = new_measurement
+        for i in range(3):
+            self.looprate_estimator[i].update(looprates[i])
         # Do the updates, if any
         if force or save_statistics or write_status:
             # Compute overall status
@@ -289,7 +272,10 @@ class MainStatusPublisher:
                                not None and proc_status[i]['status']=='active'
                                else None for i in worker_idxs]
             eta = self.eta_estimator.eta(volume_filled_frac)
-            scheduler_looprate = self.looprate_estimator.estimate
+            scheduler_looprates = dict(
+                publisher=self.looprate_estimator[0].estimate,
+                dispatcher=self.looprate_estimator[1].estimate,
+                collector=self.looprate_estimator[2].estimate)
             overall_status = dict(num_proc_active=num_proc_active,
                                   num_proc_failed=num_proc_failed,
                                   num_tasks_in_queue=num_tasks_in_queue,
@@ -301,7 +287,7 @@ class MainStatusPublisher:
                                   time_active_total=time_active_total,
                                   time_idle_total=time_idle_total,
                                   eta=eta,
-                                  scheduler_looprate=scheduler_looprate)
+                                  scheduler_looprate=scheduler_looprates)
             # Save statistics
             if force or save_statistics:
                 with open(global_vars.STATISTICS_FILE,'ab') as f:
@@ -327,9 +313,20 @@ class MainStatusPublisher:
                             sum([alg=='lcss' for alg in algorithms_list])),
                         'ETA [s]: %s'%(str(eta if eta is None else
                                            int(np.round(eta)))),
-                        'Scheduler loop frequency [Hz]: %s'%(
-                            str(scheduler_looprate if scheduler_looprate is None
-                                else int(np.round(scheduler_looprate))))
+                        'Scheduler loop frequencies [pub,disp,col] [Hz]: '
+                        '[%s,%s,%s]'%(
+                            str(scheduler_looprates['publisher']
+                                if scheduler_looprates['publisher'] is None
+                                else int(np.round(
+                                        scheduler_looprates['publisher']))),
+                            str(scheduler_looprates['dispatcher']
+                                if scheduler_looprates['dispatcher'] is None
+                                else int(np.round(
+                                        scheduler_looprates['dispatcher']))),
+                            str(scheduler_looprates['collector']
+                                if scheduler_looprates['collector'] is None
+                                else int(np.round(
+                                        scheduler_looprates['collector']))))
                     ])+'\n\n')
                     for i in worker_idxs:
                         data = proc_status[i]
@@ -422,6 +419,20 @@ class Scheduler:
         self.status_msg = [tools.NonblockingMPIMessageReceiver(
             source=worker_proc_num,tag=global_vars.STATUS_TAG)
                            for worker_proc_num in self.worker_procs]
+
+        # Threading setup for main loop threads
+        self.mutex = threading.Lock()
+        self.stop_threads = False
+        # shared quantities below
+        self.get_worker_proc_num = lambda i: self.worker_procs[i]
+        self.N_workers = len(self.worker_procs)
+        self.idle_workers = []
+        self.worker_proc_status = [None]*self.N_workers
+        self.worker_idxs = list(range(self.N_workers))
+        self.worker2task = dict.fromkeys(self.worker_idxs)
+        self.publisher_looprate = 0
+        self.dispatcher_looprate = 0
+        self.collector_looprate = 0
         
         # Clean up the data directory
         for file in glob.glob(global_vars.DATA_DIR+'/branch_*.pkl'):
@@ -440,56 +451,177 @@ class Scheduler:
             tools.MPI.blocking_send(dict(action='stop'),dest=worker_proc_num,
                                     tag=global_vars.NEW_WORK_TAG)
 
-    def spin(self):
-        """
-        Manages worker processes until the partitioning process is finished,
-        then shuts the processes down and exits.
-        """
-        def publish_idle_count():
+    def __maintain_loop_rate(self,period,dt):
+        """Maintain loop rate using the previous iteration's runtime dt."""
+        sleep_time = period-dt
+        if sleep_time>0:
+            time.sleep(sleep_time)
+
+    def status_publisher_thread(self):
+        """Main loop thread which publishes the status."""
+        self.mutex.acquire()
+        period = self.call_period
+        self.mutex.release()
+        iteration_runtime = 0
+        time_last = None
+        while True:
+            # Measure loop rate
+            time_now = time.time()
+            if time_last is not None:
+                dt = time_now-time_last
+                self.mutex.acquire()
+                self.publisher_looprate = 1./dt
+                self.mutex.release()
+            time_last = time_now
+            self.__maintain_loop_rate(period,iteration_runtime)
+            iteration_tic = time.time()
+            #-- Main code ---------------------------------------
+            self.mutex.acquire()
+            queue_length = len(self.task_queue)
+            worker_status = copy.deepcopy(self.worker_proc_status)
+            looprates = [self.publisher_looprate,self.dispatcher_looprate,
+                         self.collector_looprate]
+            self.mutex.release()
+            self.status_publisher.update(worker_status,queue_length,looprates)
+            #----------------------------------------------------
+            self.mutex.acquire()
+            stop = self.stop_threads
+            if stop:
+                self.status_publisher.update(self.worker_proc_status,
+                                             len(self.task_queue),looprates,
+                                             force=True)
+                self.status_publisher.reset_estimators()
+            self.mutex.release()
+            if stop:
+                tools.info_print('status publisher stopping')
+                return
+            iteration_toc = time.time()
+            iteration_runtime = iteration_toc-iteration_tic
+
+    def work_dispatcher_thread(self):
+        """Main loop thread which dispatches tasks to workers."""
+        def publish_idle_count(num_idle_workers,num_tasks):
             """
             Communicate to worker processes how many more workers are idle than
             there are tasks in the queue. If there are more workers idle then
             there are tasks in the queue, we want currently active workers to
             offload some of their work to these "slacking" workers.
+
+            Parameters
+            ----------
+            num_idle_workers : int
+                How many workers are without tasks?
+            num_tasks : int
+                How many tasks are currently in the queue?
             """
-            num_workers_idle = len(idle_workers)
-            num_workers_with_no_work = max(num_workers_idle-len(self.task_queue),0)
-            tools.info_print('idle worker count = %d'%(num_workers_idle))
+            num_workers_with_no_work = max(num_idle_workers-num_tasks,0)
+            tools.info_print('idle worker count = %d'%(num_idle_workers))
             with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
                 pickle.dump(num_workers_with_no_work,f)
-                
-        N_workers = len(self.worker_procs)
-        idle_workers = []
-        worker_proc_status = [None]*N_workers
-        worker_idxs = list(range(N_workers))
-        worker2task = dict.fromkeys(worker_idxs)
-        get_worker_proc_num = lambda i: self.worker_procs[i]
+
+        self.mutex.acquire()
+        period = self.call_period
+        self.mutex.release()
         iteration_runtime = 0
+        time_last = None
         while True:
-            # Maintain the desired global_vars.SCHEDULER_RATE
-            sleep_time = self.call_period-iteration_runtime
-            if sleep_time>0:
-                time.sleep(sleep_time)
+            # Measure loop rate
+            time_now = time.time()
+            if time_last is not None:
+                dt = time_now-time_last
+                self.mutex.acquire()
+                self.dispatcher_looprate = 1./dt
+                self.mutex.release()
+            time_last = time_now
+            self.__maintain_loop_rate(period,iteration_runtime)
             iteration_tic = time.time()
-            # Update status file
-            for i in worker_idxs:
+            #-- Main code ---------------------------------------
+            # Dispatch work to idle workers
+            worker_count_changed = False
+            while True:
+                # Check exit condition
+                self.mutex.acquire()
+                num_tasks = len(self.task_queue)
+                num_idle_workers = len(self.idle_workers)
+                self.mutex.release()
+                if num_tasks==0 or num_idle_workers==0:
+                    break
+                # Dispatch task to idle worker process
+                self.mutex.acquire()
+                task = self.task_queue.pop()
+                idle_worker_idx = self.idle_workers.pop()
+                self.mutex.release()
+                tools.info_print(('dispatching task to worker (%d) (%d '
+                                  'tasks left), data {}'%
+                                  (self.get_worker_proc_num(idle_worker_idx),
+                                   num_tasks-1)).format(task))
+                tools.MPI.blocking_send(task,dest=self.get_worker_proc_num(
+                    idle_worker_idx),tag=global_vars.NEW_WORK_TAG)
+                self.mutex.acquire()
+                self.worker2task[idle_worker_idx] = task
+                self.mutex.release()
+                worker_count_changed = True
+            if worker_count_changed:
+                self.mutex.acquire()
+                num_tasks = len(self.task_queue)
+                num_idle_workers = len(self.idle_workers)
+                self.mutex.release()
+                publish_idle_count(num_idle_workers,num_tasks)
+            #----------------------------------------------------
+            self.mutex.acquire()
+            stop = self.stop_threads
+            self.mutex.release()
+            if stop:
+                tools.info_print('work dispatcher stopping')
+                return
+            iteration_toc = time.time()
+            iteration_runtime = iteration_toc-iteration_tic
+
+    def work_collector_thread(self):
+        """Main loop thread which collects new and finished tasks from
+        workers. This thread also evaluates the stopping criterion."""
+        self.mutex.acquire()
+        period = self.call_period
+        self.mutex.release()
+        iteration_runtime = 0
+        time_last = None
+        while True:
+            # Measure loop rate
+            time_now = time.time()
+            if time_last is not None:
+                dt = time_now-time_last
+                self.mutex.acquire()
+                self.collector_looprate = 1./dt
+                self.mutex.release()
+            time_last = time_now
+            self.__maintain_loop_rate(period,iteration_runtime)
+            iteration_tic = time.time()
+            #-- Main code ---------------------------------------
+            # Collect new work and capture finished workers that are now idle
+            for i in self.worker_idxs:
                 status = self.status_msg[i].receive()
                 if status is not None:
                     tools.info_print(('got status update from worker (%d), '
                                       'status {}'%(
-                                          get_worker_proc_num(i))).format(
+                                          self.get_worker_proc_num(i))).format(
                                               status))
-                    worker_proc_status[i] = status
+                    self.mutex.acquire()
+                    self.worker_proc_status[i] = status
+                    self.mutex.release()
                     if status['status']=='idle':
-                        idle_workers.append(i)
-                        publish_idle_count()
+                        self.mutex.acquire()
+                        self.idle_workers.append(i)
+                        gather_completed_task = self.worker2task[i] is not None
+                        if gather_completed_task:
+                            location = self.worker2task[i]['location']
+                            self.worker2task[i] = None # reset
+                        self.mutex.release()
                         # Gather complete work, if any
-                        if worker2task[i] is not None:
-                            location = worker2task[i]['location']
-                            worker2task[i] = None # reset
+                        if gather_completed_task:
                             tools.info_print('gather completed branch at '
                                              'location %s done by worker (%d)'%(
-                                                 location,get_worker_proc_num(i)))
+                                                 location,
+                                                 self.get_worker_proc_num(i)))
                             task_filename = (global_vars.DATA_DIR+
                                              '/branch_%s.pkl'%(location))
                             with open(task_filename,'rb') as f:
@@ -497,40 +629,47 @@ class Scheduler:
                                 os.remove(task_filename)
                             with open(global_vars.BRANCHES_FILE,'ab') as f:
                                 pickle.dump(finished_branch,f)
-            # Dispatch tasks to idle workers
-            while len(self.task_queue)>0 and len(idle_workers)>0:
-                # Dispatch task to idle worker process
-                task = self.task_queue.pop()
-                idle_worker_idx = idle_workers.pop()
-                tools.info_print(('dispatching task to worker (%d) (%d '
-                                  'tasks left), data {}'%
-                                  (get_worker_proc_num(idle_worker_idx),
-                                   len(self.task_queue))).format(task))
-                tools.MPI.blocking_send(task,dest=
-                                        get_worker_proc_num(idle_worker_idx),
-                                        tag=global_vars.NEW_WORK_TAG)
-                worker2task[idle_worker_idx] = task
-                publish_idle_count()
             # Collect any new work from workers
-            for i in worker_idxs:
+            for i in self.worker_idxs:
                 task = self.task_msg[i].receive()
                 if task is not None:
                     tools.info_print(('received new task from worker (%d), '
                                       'task {}'%(
-                                          get_worker_proc_num(i))).format(
+                                          self.get_worker_proc_num(i))).format(
                                               task))
+                    self.mutex.acquire()
                     self.task_queue.append(task)
-            self.status_publisher.update(worker_proc_status,len(self.task_queue))
-            # Update iteration runtime measurement
+                    self.mutex.release()
+            #----------------------------------------------------
+            self.mutex.acquire()
+            self.stop_threads = (len(self.idle_workers)==self.N_workers and
+                                 len(self.task_queue)==0)
+            stop = self.stop_threads
+            self.mutex.release()
+            if stop:
+                tools.info_print('work collector is stopping')
+                return
             iteration_toc = time.time()
             iteration_runtime = iteration_toc-iteration_tic
-            # Check termination criterion
-            if len(idle_workers)==N_workers and len(self.task_queue)==0:
-                tools.info_print('exiting the spin() main loop!')
-                self.status_publisher.update(worker_proc_status,
-                                             len(self.task_queue),force=True)
-                self.status_publisher.reset_estimators()
-                return
+
+    def spin(self):
+        """
+        Manages worker processes until the partitioning process is finished,
+        then shuts the processes down and exits.
+        """
+        tools.info_print('creating the main loop threads')
+        publisher = threading.Thread(target=self.status_publisher_thread)
+        dispatcher = threading.Thread(target=self.work_dispatcher_thread)
+        collector = threading.Thread(target=self.work_collector_thread)
+        tools.info_print('starting the main loop threads...')
+        collector.start()
+        dispatcher.start()
+        publisher.start()
+        tools.info_print('waiting for the main loop threads to finish...')
+        collector.join()
+        dispatcher.join()
+        publisher.join()
+        tools.info_print('all main loop threads finished')
 
     def populate_queue(self,cursor,__location=''):
         """
