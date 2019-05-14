@@ -626,17 +626,18 @@ class InvertedPendulumOnCart(MPC):
         self.plant.state_update = lambda x,u,w: pendulum_dynamics(x,u)
 
 class ImplicitMPC:
-    def __init__(self,mpc,oracle):
+    def __init__(self,oracle):
         """
         Parameters
         ----------
-        mpc : MPC
-            The MPC algorithm.
         oracle : Oracle
             Oracle optimization problems created for the MPC algorithm.
         """
-        self.plant = mpc.plant
-        self.T_s = mpc.T_s
+        self.plant = oracle.mpc.plant
+        self.T_s = oracle.mpc.T_s
+        if hasattr(oracle.mpc,'specs'):
+            # Uncertainty information
+            self.specs = oracle.mpc.specs
         self.__oracle = oracle
 
     def __call__(self,x):
@@ -659,13 +660,20 @@ class ImplicitMPC:
         return u,t
 
 class ExplicitMPC:
-    def __init__(self,tree):
+    def __init__(self,tree,oracle):
         """
         Parameters
         ----------
         tree : Tree
             Root of the explicit MPC partition tree.
+        plant : Plant
+            The plant that this explicit MPC is designed for.
         """
+        self.plant = oracle.mpc.plant
+        self.T_s = oracle.mpc.T_s
+        if hasattr(oracle.mpc,'specs'):
+            # Uncertainty information
+            self.specs = oracle.mpc.specs
         self.tree = tree
         self.setup()
 

@@ -89,12 +89,7 @@ class Simulator:
             self.specs = mpc.specs
         # Sampling times: K for controller, G for plant
         # **NB: assumes that the call frequencies are integer**
-        freq_K = int(1/mpc.T_s)
-        freq_G = int(1/self.G.T_d)
-        self.h = dict(K=1./freq_K,G=1./freq_G)
-        if freq_G%freq_K!=0:
-            raise ValueError('Plant and controller call times must be '
-                             'divisible')
+        self.h = dict(K=mpc.T_s,G=self.G.T_d)
         self.T_f = T
         
         # Noise sampling functions
