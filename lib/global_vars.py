@@ -35,6 +35,6 @@ PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(
 MAX_RECURSION_LIMIT = 50 # Limit on how many times worker's ecc or lcss can
                          # recurse before submitting both left and right children to task queue
 
-SCHEDULER_RATE = 10. # [Hz] Frequency of the scheduler process main loop
+LOOPRATE_PROBE_WINDOW = 1. # [s] Duration of window for scheduler main loop frequency measurement
 STATUS_WRITE_FREQUENCY = 1. # [Hz] Frequency for updating STATUS_FILE
 STATISTICS_WRITE_FREQUENCY = 0.2 # [Hz] Frequency for updating STATISTICS_FILE

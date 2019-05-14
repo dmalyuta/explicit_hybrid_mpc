@@ -19,6 +19,43 @@ import global_vars
 import tools
 from examples import example
 
+class FrequencyProbe:
+    def __init__(self,window_duration):
+        """
+        Parameters
+        ----------
+        window_duration : float
+            Time duration [s] of window to use for frequency counting.
+        """
+        self.window = window_duration
+        self.time_last = None # Last time that self.frequency was updated
+        self.counter = 0 # How many times self.update() was called in window
+        self.frequency = 0 # [Hz] Frequency estimate
+
+    def update(self):
+        """Update frequency count."""
+        time_now = time.time()
+        self.counter += 1
+        if self.time_last is None:
+            self.time_last = time_now
+        else:
+            dt = time_now-self.time_last
+            if dt>self.window:
+                self.frequency = self.counter/dt
+                # Reset counter
+                self.counter = 0
+                self.time_last = time_now
+
+    def get_frequency(self):
+        """Get the frequency estimate"""
+        return self.frequency
+
+    def reset(self):
+        """Reset the probe."""
+        self.time_last = None
+        self.counter = 0
+        self.frequency = 0
+
 class ETACalculator:
     """Calculates the ETA via recursive averaging with exponential forgetting."""
     def __init__(self,call_period,time_constant,store_history=False):
@@ -115,16 +152,13 @@ class RLS:
             self.estimate = phi*measurement+(1-phi)*self.estimate
 
 class MainStatusPublisher:
-    def __init__(self,total_volume,call_period,status_write_period,
+    def __init__(self,total_volume,status_write_period,
                  statistics_save_period):
         """
         Parameters
         ----------
         total_volume: float
             Volume of the set that is being partitioned.
-        call_period: float
-            The period, in seconds, with which the ``update()`` method is going
-            to be called.
         status_write_period: float
             The period, in seconds, with which to write into
             ``global_vars.STATUS_FILE``.
@@ -155,15 +189,9 @@ class MainStatusPublisher:
         self.eta_estimator = ETACalculator(call_period=eta_window_duration,
                                            time_constant=eta_time_constant,
                                            store_history=False)
-
-        # Scheduler main loop rate estimator
-        self.looprate_estimator = [RLS(call_period=call_period,
-                                       time_constant=5*call_period)
-                                   for i in range(3)]
         
         # Variables for controlling the writing frequency
-        self.write_time_prev = dict(eta=None,looprate=None,
-                                    status=None,statistics=None)
+        self.write_time_prev = dict(eta=None,status=None,statistics=None)
         self.write_period = dict(eta=eta_window_duration,
                                  status=status_write_period,
                                  statistics=statistics_save_period)
@@ -189,10 +217,6 @@ class MainStatusPublisher:
         self.eta_estimator.reset()
         self.eta_last_measurement = None
         self.write_time_prev['eta'] = None
-        # Scheduler main loop frequency estimator
-        for i in range(3):
-            self.looprate_estimator[i].reset()
-        self.write_time_prev['looprate'] = None
     
     def update(self,proc_status,num_tasks_in_queue,looprates,force=False):
         """
@@ -246,9 +270,6 @@ class MainStatusPublisher:
                                         self.eta_last_measurement['t'])
                 self.eta_estimator.update(rate_measurement)
             self.eta_last_measurement = new_measurement
-        # Update the schedular main loop frequency estimate estimate
-        for i in range(3):
-            self.looprate_estimator[i].update(looprates[i])
         # Do the updates, if any
         if force or save_statistics or write_status:
             # Compute overall status
@@ -269,10 +290,6 @@ class MainStatusPublisher:
                                not None and proc_status[i]['status']=='active'
                                else None for i in worker_idxs]
             eta = self.eta_estimator.eta(volume_filled_frac)
-            scheduler_looprates = dict(
-                publisher=self.looprate_estimator[0].estimate,
-                dispatcher=self.looprate_estimator[1].estimate,
-                collector=self.looprate_estimator[2].estimate)
             overall_status = dict(num_proc_active=num_proc_active,
                                   num_proc_failed=num_proc_failed,
                                   num_tasks_in_queue=num_tasks_in_queue,
@@ -284,7 +301,7 @@ class MainStatusPublisher:
                                   time_active_total=time_active_total,
                                   time_idle_total=time_idle_total,
                                   eta=eta,
-                                  scheduler_looprate=scheduler_looprates)
+                                  scheduler_looprate=looprates)
             # Save statistics
             if force or save_statistics:
                 with open(global_vars.STATISTICS_FILE,'ab') as f:
@@ -311,19 +328,9 @@ class MainStatusPublisher:
                         'ETA [s]: %s'%(str(eta if eta is None else
                                            int(np.round(eta)))),
                         'Scheduler loop frequencies [pub,disp,col] [Hz]: '
-                        '[%s,%s,%s]'%(
-                            str(scheduler_looprates['publisher']
-                                if scheduler_looprates['publisher'] is None
-                                else int(np.round(
-                                        scheduler_looprates['publisher']))),
-                            str(scheduler_looprates['dispatcher']
-                                if scheduler_looprates['dispatcher'] is None
-                                else int(np.round(
-                                        scheduler_looprates['dispatcher']))),
-                            str(scheduler_looprates['collector']
-                                if scheduler_looprates['collector'] is None
-                                else int(np.round(
-                                        scheduler_looprates['collector']))))
+                        '[%.2e,%.2e,%.2e]'%(looprates['publisher'],
+                                            looprates['dispatcher'],
+                                            looprates['collector'])
                     ])+'\n\n')
                     for i in worker_idxs:
                         data = proc_status[i]
@@ -359,7 +366,6 @@ class Scheduler:
         # Queue of nodes to be further partitioned
         self.task_queue = []
         
-        self.call_period = 1./global_vars.SCHEDULER_RATE
         self.status_write_period = 1./global_vars.STATUS_WRITE_FREQUENCY
         self.statistics_save_period = 1./global_vars.STATISTICS_WRITE_FREQUENCY
         self.setup()
@@ -387,7 +393,6 @@ class Scheduler:
         # Create the status publisher
         self.status_publisher = MainStatusPublisher(
             total_volume=total_volume(tree),
-            call_period=self.call_period,
             status_write_period=self.status_write_period,
             statistics_save_period=self.statistics_save_period)        
 
@@ -419,9 +424,9 @@ class Scheduler:
         self.worker_proc_status = [None]*self.N_workers
         self.worker_idxs = list(range(self.N_workers))
         self.worker2task = dict.fromkeys(self.worker_idxs)
-        self.publisher_looprate = 0
-        self.dispatcher_looprate = 0
-        self.collector_looprate = 0
+        self.publisher_looprate = FrequencyProbe(global_vars.LOOPRATE_PROBE_WINDOW)
+        self.dispatcher_looprate = FrequencyProbe(global_vars.LOOPRATE_PROBE_WINDOW)
+        self.collector_looprate = FrequencyProbe(global_vars.LOOPRATE_PROBE_WINDOW)
         
         # Clean up the data directory
         for file in glob.glob(global_vars.DATA_DIR+'/branch_*.pkl'):
@@ -464,28 +469,15 @@ class Scheduler:
 
     def status_publisher_thread(self):
         """Main loop thread which publishes the status."""
-        self.mutex.acquire()
-        period = self.call_period
-        self.mutex.release()
-        iteration_runtime = 0
-        time_last = None
         while True:
-            # Measure loop rate
-            time_now = time.time()
-            if time_last is not None:
-                dt = time_now-time_last
-                self.mutex.acquire()
-                self.publisher_looprate = 1./dt
-                self.mutex.release()
-            time_last = time_now
-            self.__maintain_loop_rate(period,iteration_runtime)
-            iteration_tic = time.time()
+            self.publisher_looprate.update()
             #-- Main code ---------------------------------------
             self.mutex.acquire()
             queue_length = len(self.task_queue)
             worker_status = copy.deepcopy(self.worker_proc_status)
-            looprates = [self.publisher_looprate,self.dispatcher_looprate,
-                         self.collector_looprate]
+            looprates = dict(publisher=self.publisher_looprate.get_frequency(),
+                             dispatcher=self.dispatcher_looprate.get_frequency(),
+                             collector=self.collector_looprate.get_frequency())
             self.mutex.release()
             self.status_publisher.update(worker_status,queue_length,looprates)
             #----------------------------------------------------
@@ -500,27 +492,11 @@ class Scheduler:
             if stop:
                 tools.info_print('status publisher stopping')
                 return
-            iteration_toc = time.time()
-            iteration_runtime = iteration_toc-iteration_tic
 
     def work_dispatcher_thread(self):
         """Main loop thread which dispatches tasks to workers."""
-        self.mutex.acquire()
-        period = self.call_period
-        self.mutex.release()
-        iteration_runtime = 0
-        time_last = None
         while True:
-            # Measure loop rate
-            time_now = time.time()
-            if time_last is not None:
-                dt = time_now-time_last
-                self.mutex.acquire()
-                self.dispatcher_looprate = 1./dt
-                self.mutex.release()
-            time_last = time_now
-            self.__maintain_loop_rate(period,iteration_runtime)
-            iteration_tic = time.time()
+            self.dispatcher_looprate.update()
             #-- Main code ---------------------------------------
             # Dispatch work to idle workers
             worker_count_changed = False
@@ -558,28 +534,12 @@ class Scheduler:
             if stop:
                 tools.info_print('work dispatcher stopping')
                 return
-            iteration_toc = time.time()
-            iteration_runtime = iteration_toc-iteration_tic
 
     def work_collector_thread(self):
         """Main loop thread which collects new and finished tasks from
         workers. This thread also evaluates the stopping criterion."""
-        self.mutex.acquire()
-        period = self.call_period
-        self.mutex.release()
-        iteration_runtime = 0
-        time_last = None
         while True:
-            # Measure loop rate
-            time_now = time.time()
-            if time_last is not None:
-                dt = time_now-time_last
-                self.mutex.acquire()
-                self.collector_looprate = 1./dt
-                self.mutex.release()
-            time_last = time_now
-            self.__maintain_loop_rate(period,iteration_runtime)
-            iteration_tic = time.time()
+            self.collector_looprate.update()
             #-- Main code ---------------------------------------
             # Capture finished workers that are now idle
             any_workers_became_idle = False
@@ -626,8 +586,6 @@ class Scheduler:
             if stop:
                 tools.info_print('work collector is stopping')
                 return
-            iteration_toc = time.time()
-            iteration_runtime = iteration_toc-iteration_tic
 
     def spin(self):
         """
