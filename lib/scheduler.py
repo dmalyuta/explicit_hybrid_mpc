@@ -17,7 +17,6 @@ import numpy as np
 
 import global_vars
 import tools
-import prepare
 from examples import example
 
 class ETACalculator:
@@ -158,10 +157,8 @@ class MainStatusPublisher:
                                            store_history=False)
 
         # Scheduler main loop rate estimator
-        # [s] time constant for loop rate exponential forgetting
-        looprate_time_constant = 100.
         self.looprate_estimator = [RLS(call_period=call_period,
-                                       time_constant=looprate_time_constant)
+                                       time_constant=5*call_period)
                                    for i in range(3)]
         
         # Variables for controlling the writing frequency
@@ -386,14 +383,6 @@ class Scheduler:
             # Save the delaunay triangulated version of the set to be
             # partitioned
             pickle.dump(tree,f)
-        
-        # Load pre-compute branches, if any
-        args = prepare.parse_args()
-        if args['use_branches']:
-            tree = build_tree()
-        else:
-            # Clean up the file that'll hold the branches
-            open(global_vars.BRANCHES_FILE,'w').close()
 
         # Create the status publisher
         self.status_publisher = MainStatusPublisher(
@@ -457,6 +446,22 @@ class Scheduler:
         if sleep_time>0:
             time.sleep(sleep_time)
 
+    def __publish_idle_count(self):
+        """
+        Communicate to worker processes how many more workers are idle than
+        there are tasks in the queue. If there are more workers idle then
+        there are tasks in the queue, we want currently active workers to
+        offload some of their work to these "slacking" workers.
+
+        **NOT THREAD SAFE -- wrap with a mutex!**
+        """
+        num_tasks = len(self.task_queue)
+        num_idle_workers = len(self.idle_workers)
+        num_workers_with_no_work = max(num_idle_workers-num_tasks,0)
+        tools.info_print('idle worker count = %d'%(num_idle_workers))
+        with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
+            pickle.dump(num_workers_with_no_work,f)
+
     def status_publisher_thread(self):
         """Main loop thread which publishes the status."""
         self.mutex.acquire()
@@ -500,25 +505,6 @@ class Scheduler:
 
     def work_dispatcher_thread(self):
         """Main loop thread which dispatches tasks to workers."""
-        def publish_idle_count(num_idle_workers,num_tasks):
-            """
-            Communicate to worker processes how many more workers are idle than
-            there are tasks in the queue. If there are more workers idle then
-            there are tasks in the queue, we want currently active workers to
-            offload some of their work to these "slacking" workers.
-
-            Parameters
-            ----------
-            num_idle_workers : int
-                How many workers are without tasks?
-            num_tasks : int
-                How many tasks are currently in the queue?
-            """
-            num_workers_with_no_work = max(num_idle_workers-num_tasks,0)
-            tools.info_print('idle worker count = %d'%(num_idle_workers))
-            with open(global_vars.IDLE_COUNT_FILE,'wb') as f:
-                pickle.dump(num_workers_with_no_work,f)
-
         self.mutex.acquire()
         period = self.call_period
         self.mutex.release()
@@ -563,10 +549,8 @@ class Scheduler:
                 worker_count_changed = True
             if worker_count_changed:
                 self.mutex.acquire()
-                num_tasks = len(self.task_queue)
-                num_idle_workers = len(self.idle_workers)
+                self.__publish_idle_count()
                 self.mutex.release()
-                publish_idle_count(num_idle_workers,num_tasks)
             #----------------------------------------------------
             self.mutex.acquire()
             stop = self.stop_threads
@@ -597,7 +581,8 @@ class Scheduler:
             self.__maintain_loop_rate(period,iteration_runtime)
             iteration_tic = time.time()
             #-- Main code ---------------------------------------
-            # Collect new work and capture finished workers that are now idle
+            # Capture finished workers that are now idle
+            any_workers_became_idle = False
             for i in self.worker_idxs:
                 status = self.status_msg[i].receive()
                 if status is not None:
@@ -611,25 +596,12 @@ class Scheduler:
                     if status['status']=='idle':
                         self.mutex.acquire()
                         self.idle_workers.append(i)
-                        gather_completed_task = self.worker2task[i] is not None
-                        if gather_completed_task:
-                            location = self.worker2task[i]['location']
+                        if self.worker2task[i] is not None:
                             self.worker2task[i] = None # reset
                         self.mutex.release()
-                        # Gather complete work, if any
-                        if gather_completed_task:
-                            tools.info_print('gather completed branch at '
-                                             'location %s done by worker (%d)'%(
-                                                 location,
-                                                 self.get_worker_proc_num(i)))
-                            task_filename = (global_vars.DATA_DIR+
-                                             '/branch_%s.pkl'%(location))
-                            with open(task_filename,'rb') as f:
-                                finished_branch = pickle.load(f)
-                                os.remove(task_filename)
-                            with open(global_vars.BRANCHES_FILE,'ab') as f:
-                                pickle.dump(finished_branch,f)
+                        any_workers_became_idle = True
             # Collect any new work from workers
+            new_tasks_available = False
             for i in self.worker_idxs:
                 task = self.task_msg[i].receive()
                 if task is not None:
@@ -640,6 +612,11 @@ class Scheduler:
                     self.mutex.acquire()
                     self.task_queue.append(task)
                     self.mutex.release()
+                    new_tasks_available = True
+            if any_workers_became_idle or new_tasks_available:
+                self.mutex.acquire()
+                self.__publish_idle_count()
+                self.mutex.release()
             #----------------------------------------------------
             self.mutex.acquire()
             self.stop_threads = (len(self.idle_workers)==self.N_workers and
@@ -710,22 +687,11 @@ def build_tree():
     -------
     tree : Tree
         The built tree.
-    """
-    # Load the tree branches
-    branches = dict()
-    with open(global_vars.BRANCHES_FILE,'rb') as f:
-        f.seek(0)
-        while True:
-            try:
-                branch = pickle.load(f)
-                branches.update({branch['location']:branch['branch_root']})
-            except EOFError:
-                break
-    
-    # Compile the tree
+    """    
     def extend_tree_with_branches(cursor,__location=''):
         """
-        Extend an existing tree using branches.
+        Extend an existing tree using branch_*.pkl files in
+        global_vars.DATA_DIR.
         
         Parameters
         ----------
@@ -735,9 +701,15 @@ def build_tree():
             Cursor location relative to root. **Don't pass this in**.
         """
         if cursor.is_leaf():
-            if __location in branches:
-                branch = branches[__location]
+            try:
+                branch_filename = (global_vars.DATA_DIR+
+                                   '/branch_%s.pkl'%(__location))
+                with open(branch_filename,'rb') as f:
+                    branch = pickle.load(f)['branch_root']
+                os.remove(branch_filename) # cleanup
                 branch.copy(cursor) # this may make cursor not a leaf anymore
+            except FileNotFoundError:
+                pass # This is a leaf in the final tree
         if not cursor.is_leaf():
             extend_tree_with_branches(cursor.left,__location+'0')
             extend_tree_with_branches(cursor.right,__location+'1')

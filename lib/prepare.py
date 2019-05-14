@@ -23,9 +23,6 @@ Some notes on usage:
   instead use --runtime-dir=<runtime directory name>, which should be the one
   that was created by ``prepare.py``. In fact, it is the directory of the
   ``run.sh`` file that you want to execute.
-- You may use the --branches commandline argument to use an existing
-  branches.pkl in the <runtime_dir>/data folder, e.g. from a previous incomplete
-  run.
 """
 
 def parse_args():
@@ -58,10 +55,6 @@ def parse_args():
     parser.add_argument('--runtime-dir',action='store',dest='runtime_dir',
                         type=str,help='force-specify the runtime directory'
                         ' name',required=False)
-    parser.add_argument('-b','--branches',action='store_true',
-                        dest='use_branches',default=False,
-                        help='whether to use existing branches.pkl',
-                        required=False)
     args = vars(parser.parse_args())
     return args
 
@@ -111,7 +104,6 @@ def set_global_variables():
     global_vars.STATISTICS_FILE = global_vars.DATA_DIR+'/statistics.pkl' # Overall statistics
     global_vars.TREE_FILE = global_vars.DATA_DIR+'/tree.pkl' # Overall tree
     global_vars.ETA_RLS_FILE = global_vars.DATA_DIR+'/rls.pkl' # Overall tree
-    global_vars.BRANCHES_FILE = global_vars.DATA_DIR+'/branches.pkl' # Tree branches, used for tree building
     global_vars.IDLE_COUNT_FILE = global_vars.DATA_DIR+'/idle_count.pkl' # Idle process count
 
 def make_runtime_dir():
