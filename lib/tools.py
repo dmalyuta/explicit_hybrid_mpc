@@ -50,7 +50,7 @@ class MPICommunicator:
 
     def nonblocking_send(self,*args,**kwargs):
         """MPI send message, non-blocking."""
-        return self.comm.issend(*args,**kwargs)
+        return self.comm.isend(*args,**kwargs)
 
     def blocking_receive(self,*args,**kwargs):
         """MPI receive message, blocking."""
@@ -58,7 +58,7 @@ class MPICommunicator:
     
     def blocking_send(self,*args,**kwargs):
         """MPI send message, blocking."""
-        return self.comm.ssend(*args,**kwargs)
+        return self.comm.send(*args,**kwargs)
 
 MPI = MPICommunicator() # Object that abstracts calls to MPI library routines
 

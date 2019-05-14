@@ -513,11 +513,13 @@ class Scheduler:
                 publish_idle_count()
             # Collect any new work from workers
             for i in worker_idxs:
-                tasks = self.task_msg[i].receive()
-                if tasks is not None:
-                    tools.info_print('received new task from worker (%d)'%
-                                      (get_worker_proc_num(i)))
-                    self.task_queue.append(tasks)
+                task = self.task_msg[i].receive()
+                if task is not None:
+                    tools.info_print(('received new task from worker (%d), '
+                                      'task {}'%(
+                                          get_worker_proc_num(i))).format(
+                                              task))
+                    self.task_queue.append(task)
             self.status_publisher.update(worker_proc_status,len(self.task_queue))
             # Update iteration runtime measurement
             iteration_toc = time.time()

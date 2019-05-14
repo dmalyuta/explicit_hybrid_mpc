@@ -137,7 +137,7 @@ class Worker:
         self.alg_call = alg_call
     
     def offload_child_computation(self,child,location,which_alg,
-                                  prioritize_self=False,force_offload=False):
+                                  prioritize_self=False,force='none'):
         """
         Offload partitioning for child to another worker process.
         
@@ -152,8 +152,10 @@ class Worker:
         prioritize_self : bool, optional
             If ``True``, ignore worker count but do respect recursion limit in
             terms of assigning work to self.
-        force_offload : bool, optional
-            If ``True``, submit task to queue and not to self, no matter what.
+        force : {'none','offload','self'}, optional
+            'offload' means choose to submit task to queue, no matter what;
+            'self' means continue to work on task alone, no matter what; 'none'
+            means no such forcing.
         """
         with open(global_vars.IDLE_COUNT_FILE,'rb') as f:
             try:
@@ -170,8 +172,9 @@ class Worker:
         if recurs_limit_reached:
             tools.error_print('recursion limit reached - submitting task'
                               ' to queue')
-        if (force_offload or recurs_limit_reached or
-            (idle_worker_count>0 and not prioritize_self)):
+        if (force!='self' and
+            (force=='offload' or recurs_limit_reached or
+             (idle_worker_count>0 and not prioritize_self))):
             new_task = dict(branch_root=child,location=location,
                             action=which_alg)
             tools.MPI.nonblocking_send(new_task,dest=global_vars.SCHEDULER_PROC,
@@ -229,7 +232,8 @@ class Worker:
                                      commutation=delta_hat,
                                      vertex_costs=vertex_costs,
                                      vertex_inputs=vertex_inputs)
-                self.offload_child_computation(node,location,'lcss')
+                self.offload_child_computation(node,location,'lcss',
+                                               force='self')
     
     def lcss(self,node,location):
         """
@@ -339,7 +343,7 @@ class Worker:
                 node.data.vertex_costs = new_vertex_costs
                 node.data.vertex_inputs = new_vertex_inputs
                 self.offload_child_computation(node,location,'lcss',
-                                               force_offload=True)
+                                               force='self')
             else:
                 S_1,S_2,v_idx = tools.split_along_longest_edge(
                     node.data.vertices)
