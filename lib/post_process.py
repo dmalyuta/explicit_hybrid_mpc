@@ -95,17 +95,50 @@ class PostProcessor:
             """Get tree file size in MB."""
             return os.path.getsize(global_vars.TREE_FILE)/2**20
 
-        print('Partitioning runtime CPU [hr]  : %.2f'%(
+        # Optimized storage requirement
+        # theory (assumes perfect binary tree)
+        mu_f = 64//8 # [B] Float size
+        # Vector dimensions
+        if global_vars.EXAMPLE=='pendulum':
+            p,n_hat = 4,1
+        elif global_vars.EXAMPLE=='cwh_z':
+            p,n_hat = 2,1
+        elif global_vars.EXAMPLE=='cwh_xy':
+            p,n_hat = 4,2
+        elif global_vars.EXAMPLE=='cwh_xyz':
+            p,n_hat = 6,3
+        else:
+            raise ValueError('Unknown example')
+        leaves = count_leaves(self.tree)
+        B2MB = 1./(2**20) # [B] -> [MB]
+        opt_storage_theory = 3./2.*leaves*mu_f*p*(p+1)+leaves*(p+1)*n_hat*mu_f
+        opt_storage_theory *= B2MB # B -> MB
+        # actual tree
+        def get_opt_memreq(cursor):
+            """Get the optimized storage memory requirement [MB] in which the
+            mixing matrix is stored directly."""
+            if cursor.is_leaf():
+                containment = mu_f*p*(p+1)
+                inputs = mu_f*n_hat*(p+1)
+                return (inputs+containment)*B2MB
+            else:
+                containment = 0 if cursor.left.is_leaf() else mu_f*p*(p+1)*B2MB
+                return (containment+get_opt_memreq(cursor.left)+
+                        get_opt_memreq(cursor.right))
+
+        print('Partitioning runtime CPU [hr]           : %.2f'%(
             self.statistics['time_active_total'][-1]/3600))
-        print('Partitioning runtime wall [hr] : %.2f'%(
+        print('Partitioning runtime wall [hr]          : %.2f'%(
             self.statistics['time_elapsed'][-1]/3600))
-        print('Max cores active               : %d'%(
+        print('Max cores active                        : %d'%(
             np.max(self.statistics['num_proc_active'])))
-        print('Average cores active           : %d'%(
+        print('Average cores active                    : %d'%(
             np.round(np.average(self.statistics['num_proc_active']))))
-        print('Tree depth                     : %d'%(get_depth(self.tree)))
-        print('Tree leaf count                : %d'%(count_leaves(self.tree)))
-        print('Tree file size [MB]            : %d'%(get_size()))
+        print('Tree depth                              : %d'%(get_depth(self.tree)))
+        print('Tree leaf count                         : %d'%(leaves))
+        print('Tree file size [MB]                     : %d'%(get_size()))
+        print('Tree optimized file size (theory) [MB]  : %d'%(opt_storage_theory))
+        print('Tree optimized file size [MB]           : %d'%(get_opt_memreq(self.tree)))
 
     def progress(self):
         """
@@ -284,27 +317,27 @@ def main():
     """Run post-processing for data specified via command-line."""
     post_processor = PostProcessor()
     # Tree statistics
-    post_processor.tree_stats()
+    # post_processor.tree_stats()
     # Algorithm progress plot
-    post_processor.progress()
-    # # Simulation comparison (implicit vs. explicit)
-    # if 'cwh' in global_vars.EXAMPLE:
-    #     # CWH satellite example
-    #     orbit_count = 3 # How many orbits to simulate for
-    #     wo = mpc_library.satellite_parameters()['wo'] # [rad/s] Orbital rate
-    #     T_per_orbit = (2.*np.pi/wo) # [s] Time for one orbit
-    #     T = T_per_orbit*orbit_count # [s] Simulation duration
-    #     x_init = np.zeros(post_processor.implicit_mpc.plant.n) # Initial condition
-    #     post_processor.simulate_and_plot(x_init,T,[
-    #         lambda exp,imp: total_delta_v_usage(exp,imp,t_scale=1/T_per_orbit)])
-    # else:
-    #     # Inverted pendulum example
-    #     T = 100 # [s] Simulation duration
-    #     #x_init = np.array([0,np.deg2rad(0.1),0,0]) # Initial condition
-    #     x_init = np.array([0,np.deg2rad(3),0.1,0]) # Initial condition
-    #     post_processor.simulate_and_plot(x_init,T,[input_history,state_history])
-    # # Evaluation time statistics
-    # post_processor.evaluation_time(N=100)
+    # post_processor.progress()
+    # Simulation comparison (implicit vs. explicit)
+    if 'cwh' in global_vars.EXAMPLE:
+        # CWH satellite example
+        orbit_count = 3 # How many orbits to simulate for
+        wo = mpc_library.satellite_parameters()['wo'] # [rad/s] Orbital rate
+        T_per_orbit = (2.*np.pi/wo) # [s] Time for one orbit
+        T = T_per_orbit*orbit_count # [s] Simulation duration
+        x_init = np.zeros(post_processor.implicit_mpc.plant.n) # Initial condition
+        post_processor.simulate_and_plot(x_init,T,[
+            lambda exp,imp: total_delta_v_usage(exp,imp,t_scale=1/T_per_orbit)])
+    else:
+        # Inverted pendulum example
+        T = 100 # [s] Simulation duration
+        #x_init = np.array([0,np.deg2rad(0.1),0,0]) # Initial condition
+        x_init = np.array([0,np.deg2rad(0.01),0,0]) # Initial condition
+        post_processor.simulate_and_plot(x_init,T,[input_history,state_history])
+    # Evaluation time statistics
+    # post_processor.evaluation_time(N=1000)
 
 if __name__=='__main__':
     main()

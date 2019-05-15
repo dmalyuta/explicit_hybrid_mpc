@@ -456,10 +456,10 @@ class InvertedPendulumOnCart(MPC):
         bigM = np.array([p_max,ang_max,v_max,rate_max])
 
         # The set that will be partitioned
-        self.p_err = 0.1 # [m] Max position error
-        self.v_err = 0.1 # [m/s] Max velocity error
-        self.ang_err = np.deg2rad(1) # [rad] Max pendulum angle error
-        self.rate_err = np.deg2rad(5) # [rad/s] Max pendulum swing rate error
+        self.p_err = 1 # [m] Max position error
+        self.v_err = 1 # [m/s] Max velocity error
+        self.ang_err = np.deg2rad(5) # [rad] Max pendulum angle error
+        self.rate_err = np.deg2rad(20) # [rad/s] Max pendulum swing rate error
         self.D_x = np.diag([self.p_err,self.ang_err,self.v_err,self.rate_err])
         self.D_u = np.diag([F_max])
 
