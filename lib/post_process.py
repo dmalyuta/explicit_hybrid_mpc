@@ -194,7 +194,7 @@ class PostProcessor:
         simulator = Simulator(self.explicit_mpc,T)
         sim_explicit = simulator.run(x_init,label='explicit')
         # Simulate implicit MPC
-        simulator = Simulator(self.implicit_mpc,T)
+        simulator = Simulator(self.implicit_mpc,0.5)#T)
         sim_implicit = simulator.run(x_init,label='implicit')
         # Called plotting functions
         for plot_func in plot_funcs:
@@ -317,9 +317,9 @@ def main():
     """Run post-processing for data specified via command-line."""
     post_processor = PostProcessor()
     # Tree statistics
-    # post_processor.tree_stats()
+    post_processor.tree_stats()
     # Algorithm progress plot
-    # post_processor.progress()
+    post_processor.progress()
     # Simulation comparison (implicit vs. explicit)
     if 'cwh' in global_vars.EXAMPLE:
         # CWH satellite example
@@ -332,9 +332,9 @@ def main():
             lambda exp,imp: total_delta_v_usage(exp,imp,t_scale=1/T_per_orbit)])
     else:
         # Inverted pendulum example
-        T = 100 # [s] Simulation duration
+        T = 3 # [s] Simulation duration
         #x_init = np.array([0,np.deg2rad(0.1),0,0]) # Initial condition
-        x_init = np.array([0,np.deg2rad(0.01),0,0]) # Initial condition
+        x_init = np.array([0,np.deg2rad(2),0.1,0]) # Initial condition
         post_processor.simulate_and_plot(x_init,T,[input_history,state_history])
     # Evaluation time statistics
     # post_processor.evaluation_time(N=1000)

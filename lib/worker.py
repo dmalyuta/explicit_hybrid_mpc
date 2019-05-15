@@ -114,6 +114,50 @@ class WorkerStatusPublisher:
         if algorithm is not None:
             self.data['algorithm'] = algorithm
         self.__write()
+
+class DifficultyChecker:
+    def __init__(self,progress_rate_threshold=0.01):
+        """
+        Parameters
+        ----------
+        progress_rate_threshold : float
+            Threshold progress rate [% volume filled/min] below which to judge
+            the branch as "difficult".
+        """
+        self.threshold = progress_rate_threshold
+        self.reset()
+
+    def reset(self):
+        """Reset memory variables"""
+        self.time_last = None
+        self.progress_last = None
+        self.difficult = False
+
+    def check(self,progress):
+        """
+        Parameters
+        ----------
+        progress : float
+            The current progress.
+
+        Returns
+        -------
+        self.difficult : bool
+            If ``True``, the branch is difficult because the progress rate is
+            below the threshold.
+        """
+        time_now = time.time()
+        one_minute = 60 # [s]
+        if self.time_last is None:
+            self.time_last = time_now
+            self.progress_last = progress
+        else:
+            if time_now-self.time_last>one_minute:
+                progress_rate = progress-self.progress_last # [%/min]
+                self.difficult = progress_rate<self.threshold
+                if self.difficult:
+                    tools.info_print('current branch is difficult')
+        return self.difficult
         
 class Worker:
     def __init__(self):
@@ -125,6 +169,8 @@ class Worker:
         self.oracle = example(abs_err=suboptimality_settings['abs_err'],
                               rel_err=suboptimality_settings['rel_err'])[2]
         tools.info_print('made oracle')
+        # Checker whether a branch is "difficult"
+        self.difficulty = DifficultyChecker()
         # Status publisher
         self.status_publisher = WorkerStatusPublisher()
         tools.MPI.global_sync() # wait for all slaves to setup
@@ -157,6 +203,7 @@ class Worker:
             'self' means continue to work on task alone, no matter what; 'none'
             means no such forcing.
         """
+        # --- Check worker count
         with open(global_vars.IDLE_COUNT_FILE,'rb') as f:
             try:
                 idle_worker_count = pickle.load(f)
@@ -166,14 +213,19 @@ class Worker:
                 # are no idle workers
                 idle_worker_count = 0
         tools.info_print('idle worker count = %d'%(idle_worker_count))
+        # --- Check recursion limit
         recursion_depth = (len(location)-
                            len(self.status_publisher.data['current_branch']))
         recurs_limit_reached = recursion_depth>global_vars.MAX_RECURSION_LIMIT
         if recurs_limit_reached:
             tools.error_print('recursion limit reached - submitting task'
                               ' to queue')
+        # --- Check difficult of current branch
+        progress = self.status_publisher.data['volume_filled_current']
+        is_difficult = self.difficulty.check(progress)
+        # --- Offloading logic
         if (force!='self' and
-            (force=='offload' or recurs_limit_reached or
+            (force=='offload' or recurs_limit_reached or is_difficult or
              (idle_worker_count>0 and not prioritize_self))):
             new_task = dict(branch_root=child,location=location,
                             action=which_alg)
@@ -391,9 +443,10 @@ class Worker:
                 # Do work on this branch (i.e. partition this simplex)
                 try:
                     tools.info_print('calling algorithm')
+                    self.difficulty.reset() # Reset difficult checking
                     self.alg_call(data['action'],branch,branch_location)
                 except:
-                    self.status_publisher.update(failed=True,blocking=True)
+                    self.status_publisher.update(failed=True)
                     raise
                 # Save completed branch and notify scheduler that it is
                 # available

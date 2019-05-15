@@ -570,7 +570,10 @@ class Scheduler:
                                           self.get_worker_proc_num(i))).format(
                                               task))
                     self.mutex.acquire()
-                    self.task_queue.append(task)
+                    # Inserting at the front naturally "bubbles" the easier
+                    # tasks to the top, while the difficult tasks gather at the
+                    # beginning of self.task_queue
+                    self.task_queue.insert(0,task)
                     self.mutex.release()
                     new_tasks_available = True
             if any_workers_became_idle or new_tasks_available:
