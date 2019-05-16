@@ -154,6 +154,8 @@ class DifficultyChecker:
         else:
             if time_now-self.time_last>one_minute:
                 progress_rate = progress-self.progress_last # [%/min]
+                self.time_last = time_now
+                self.progress_last = progress
                 self.difficult = progress_rate<self.threshold
                 if self.difficult:
                     tools.info_print('current branch is difficult')
@@ -229,6 +231,7 @@ class Worker:
              (idle_worker_count>0 and not prioritize_self))):
             new_task = dict(branch_root=child,location=location,
                             action=which_alg)
+            tools.info_print('sending task {}'.format(new_task))
             tools.MPI.nonblocking_send(new_task,dest=global_vars.SCHEDULER_PROC,
                                        tag=global_vars.NEW_BRANCH_TAG)
         else:

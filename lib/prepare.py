@@ -164,7 +164,7 @@ def make_runtime_dir():
             'module load contrib/gcc/6.2.0_mpich-3.2 # MPI',
             '',
             '# Run script',
-            'source activate py36 # Python 3.6.7 virtualenv with necessary packages (MOSEK + requirements.txt)',
+            'source activate py372 # Python virtualenv with necessary packages (MOSEK + requirements.txt)',
             'cd %s'%(global_vars.RUNTIME_DIR),
             'bash run.sh'
         ])+'\n\n')

@@ -25,6 +25,7 @@ import global_vars
 from tree import Tree, NodeData
 
 class MPICommunicator:
+    """**NOT THREAD SAFE - use inside a mutex block!**"""
     def __init__(self):
         self.comm = mpi4py_MPI.COMM_WORLD # MPI inter-process communicator
 
@@ -63,7 +64,8 @@ class MPICommunicator:
 MPI = MPICommunicator() # Object that abstracts calls to MPI library routines
 
 class NonblockingMPIMessageReceiver:
-    """Wraps a call to MPI's Comm.irecv."""
+    """Wraps a call to MPI's Comm.irecv.
+    **NOT THREAD SAFE - use inside a mutex block!**"""
     def __init__(self,source,tag):
         """
         Parameters

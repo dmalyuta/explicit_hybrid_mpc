@@ -442,8 +442,10 @@ class Scheduler:
     def stop_workers(self):
         """Tell all worker processes to stop."""
         for worker_proc_num in self.worker_procs:
+            self.mutex.acquire()
             tools.MPI.blocking_send(dict(action='stop'),dest=worker_proc_num,
                                     tag=global_vars.NEW_WORK_TAG)
+            self.mutex.release()
 
     def __maintain_loop_rate(self,period,dt):
         """Maintain loop rate using the previous iteration's runtime dt."""
@@ -517,8 +519,10 @@ class Scheduler:
                                   'tasks left), data {}'%
                                   (self.get_worker_proc_num(idle_worker_idx),
                                    num_tasks-1)).format(task))
+                self.mutex.acquire()
                 tools.MPI.blocking_send(task,dest=self.get_worker_proc_num(
                     idle_worker_idx),tag=global_vars.NEW_WORK_TAG)
+                self.mutex.release()
                 self.mutex.acquire()
                 self.worker2task[idle_worker_idx] = task
                 self.mutex.release()
@@ -544,7 +548,9 @@ class Scheduler:
             # Capture finished workers that are now idle
             any_workers_became_idle = False
             for i in self.worker_idxs:
+                self.mutex.acquire()
                 status = self.status_msg[i].receive()
+                self.mutex.release()
                 if status is not None:
                     tools.info_print(('got status update from worker (%d), '
                                       'status {}'%(
@@ -563,7 +569,9 @@ class Scheduler:
             # Collect any new work from workers
             new_tasks_available = False
             for i in self.worker_idxs:
+                self.mutex.acquire()
                 task = self.task_msg[i].receive()
+                self.mutex.release()
                 if task is not None:
                     tools.info_print(('received new task from worker (%d), '
                                       'task {}'%(
