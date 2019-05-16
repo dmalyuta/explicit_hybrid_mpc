@@ -7,3 +7,4 @@ runtime/*
 figures/*
 lib/sage/*
 !/**/.gitkeep
+!/figures/readme_image.png
