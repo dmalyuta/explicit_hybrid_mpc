@@ -53,6 +53,6 @@ $ pip install -r requirements.txt
 Partitioning jobs are created through `make_jobs.sh`. Run
 
 ```
-bash make_jobs -h
+bash make_jobs.sh -h
 ```
 for more information. The job files are stored in the `./runtime` directory.
